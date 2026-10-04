@@ -1,0 +1,36 @@
+model Conversation {
+  id              String        @id @default(cuid())
+  orderId         String?       @unique
+  order           Order?        @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  customerId      String
+  customer        User          @relation("CustomerConversations", fields: [customerId], references: [id], onDelete: Cascade)
+  vendorProfileId String
+  vendorProfile   VendorProfile @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
+  lastMessageAt   DateTime      @default(now())
+  messages        ChatMessage[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([customerId])
+  @@index([vendorProfileId])
+  @@index([orderId])
+  @@map("conversation")
+}
+
+model ChatMessage {
+  id                String       @id @default(cuid())
+  conversationId    String
+  conversation      Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId          String
+  sender            User         @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  content           String       @db.Text
+  attachments       String[]     @default([])
+  hasSafetyWarning  Boolean      @default(false)
+  safetyWarningNote String?
+  isRead            Boolean      @default(false)
+  createdAt         DateTime     @default(now())
+
+  @@index([conversationId])
+  @@index([senderId])
+  @@map("chat_message")
+}

@@ -1,0 +1,51 @@
+model Assignment {
+  id                        String            @id @default(cuid())
+  customerId                String
+  customer                  User              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  title                     String
+  description               String            @db.Text
+  category                  GigCategory       @default(ASSIGNMENT)
+  subject                   String
+  type                      AssignmentType    @default(SOFTCOPY)
+  deadline                  DateTime
+  budgetMin                 Float
+  budgetMax                 Float
+  deliveryAddress           String?
+  preferredCampus           String?
+  preferredHandwritingStyle HandwritingStyle?
+  sampleFileUrls            String[]          @default([])
+  status                    AssignmentStatus  @default(OPEN)
+  bidsCount                 Int               @default(0)
+  bids                      Bid[]
+  acceptedBidId             String?
+  orders                    Order[]
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
+
+  @@index([customerId])
+  @@index([category])
+  @@index([status])
+  @@index([type])
+  @@index([preferredCampus])
+  @@map("assignment")
+}
+
+model Bid {
+  id              String         @id @default(cuid())
+  assignmentId    String
+  assignment      Assignment     @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  vendorProfileId String
+  vendorProfile   VendorProfile  @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
+  proposedPrice   Float
+  deliveryDays    Int
+  coverLetter     String         @db.Text
+  sampleUrls      String[]       @default([])
+  status          BidStatus      @default(PENDING)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([assignmentId])
+  @@index([vendorProfileId])
+  @@index([status])
+  @@map("bid")
+}

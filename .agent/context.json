@@ -1,0 +1,44 @@
+{
+  "name": "nestjs-enterprise-starter",
+  "version": "1.0.0",
+  "architecture": "modular-monolith",
+  "framework": "nestjs-12",
+  "language": "typescript-5-strict",
+  "moduleResolution": "nodenext",
+  "securityPriority": "critical",
+  "dataLayer": {
+    "orm": "prisma-6",
+    "database": "postgresql-16",
+    "schemaPath": "prisma/schema.prisma"
+  },
+  "authLayer": {
+    "plannedEngine": "better-auth",
+    "integrationPath": "src/modules/auth",
+    "guard": "src/modules/auth/auth.guard.ts",
+    "publicDecorator": "src/common/decorators/public.decorator.ts"
+  },
+  "directoryStructure": {
+    "src/common": "Cross-cutting concerns: decorators, filters, interceptors, middleware, pipes",
+    "src/config": "Zod-validated type-safe configuration namespaces",
+    "src/core": "Core infrastructure singletons: PrismaModule, HealthModule, Logger",
+    "src/modules": "High-cohesion domain modules: auth, users",
+    "docs": "Human and AI agent documentation"
+  },
+  "securityGuardrails": {
+    "publicRoutesRequireDecorator": "@Public()",
+    "rateLimiting": "@nestjs/throttler",
+    "headers": "helmet",
+    "inputValidation": "AppValidationPipe with whitelist & forbidNonWhitelisted",
+    "errorSanitization": "HttpExceptionFilter prevents stack & DB leakages in prod",
+    "correlationTracing": "CorrelationIdMiddleware injects x-correlation-id"
+  },
+  "commands": {
+    "build": "npm run build",
+    "test": "npm run test",
+    "testE2E": "npm run test:e2e",
+    "lint": "npm run lint",
+    "prismaGenerate": "npm run prisma:generate",
+    "prismaMigrate": "npm run prisma:migrate",
+    "dockerUp": "docker compose up -d"
+  }
+}

@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nestjs_starter_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      # In production, ensure DB_PASSWORD is set to a strong unique secret in .env
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres_dev_password_change_in_prod}
+      POSTGRES_DB: ${DB_NAME:-starter_db}
+    ports:
+      # Bind strictly to loopback interface to prevent exposure across host network interfaces
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-starter_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: nestjs_starter_postgres_data

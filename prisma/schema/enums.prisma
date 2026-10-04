@@ -1,0 +1,97 @@
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  MODERATOR
+  VENDOR
+  CUSTOMER
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum HandwritingStyle {
+  CURSIVE
+  PRINT
+  MIXED
+  MATH_EQUATION
+}
+
+enum AcademicLevel {
+  UNDERGRADUATE
+  GRADUATE
+  POSTGRADUATE
+  DOCTORATE
+  OTHER
+}
+
+enum GigCategory {
+  ASSIGNMENT
+  LAB_REPORT
+  THESIS_RESEARCH
+  HANDWRITTEN_HARDCOPY
+  MATH_PROBLEM_SOLVING
+  PRESENTATION_SLIDES
+  OTHER
+}
+
+enum GigTierType {
+  SINGLE
+  TIERED
+}
+
+enum AssignmentType {
+  SOFTCOPY
+  HARDCOPY
+}
+
+enum AssignmentStatus {
+  OPEN
+  ASSIGNED
+  COMPLETED
+  CANCELLED
+}
+
+enum BidStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  ESCROW_HELD
+  IN_PROGRESS
+  DELIVERED
+  UNDER_REVIEW
+  COMPLETED
+  DISPUTED
+  REFUNDED
+  CANCELLED
+}
+
+enum EscrowStatus {
+  AWAITING_PAYMENT
+  HELD
+  RELEASED_TO_VENDOR
+  REFUNDED_TO_CUSTOMER
+}
+
+enum WalletTransactionType {
+  ESCROW_RELEASE
+  WITHDRAWAL
+  REFUND
+  PLATFORM_FEE
+}
+
+enum CheckpointStatus {
+  PENDING
+  IN_PROGRESS
+  SUBMITTED
+  ACCEPTED
+  REVISION_REQUESTED
+}
+

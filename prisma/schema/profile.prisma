@@ -1,0 +1,69 @@
+model VendorProfile {
+  id                 String             @id @default(cuid())
+  userId             String             @unique
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  university         String
+  department         String
+  academicLevel      AcademicLevel      @default(UNDERGRADUATE)
+  degree             String?
+  passingYear        Int?
+  bio                String?            @db.Text
+  skills             String[]           @default([])
+  verificationStatus VerificationStatus @default(PENDING)
+  idCardUrl          String?
+  rejectionReason    String?
+  verifiedAt         DateTime?
+  verifiedById       String?
+  rating             Float              @default(0.0)
+  totalReviews       Int                @default(0)
+  completedOrders    Int                @default(0)
+  locationName       String?
+  latitude           Float?
+  longitude          Float?
+  handwritingSamples HandwritingSample[]
+  gigs               Gig[]
+  bids               Bid[]
+  orders             Order[]
+  wallet             VendorWallet?
+  conversations      Conversation[]
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([university])
+  @@index([department])
+  @@index([verificationStatus])
+  @@map("vendor_profile")
+}
+
+model CustomerProfile {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  university String?
+  department String?
+  phone      String?
+  campus     String?
+  latitude   Float?
+  longitude  Float?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("customer_profile")
+}
+
+model HandwritingSample {
+  id              String           @id @default(cuid())
+  vendorProfileId String
+  vendorProfile   VendorProfile    @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
+  sampleUrl       String
+  style           HandwritingStyle @default(CURSIVE)
+  neatnessScore   Int              @default(5)
+  description     String?
+  isVerified      Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([vendorProfileId])
+  @@index([style])
+  @@map("handwriting_sample")
+}

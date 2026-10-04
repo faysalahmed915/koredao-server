@@ -1,0 +1,22 @@
+model ProjectCheckpoint {
+  id               String           @id @default(cuid())
+  orderId          String
+  order            Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  title            String
+  description      String?          @db.Text
+  targetDate       DateTime?
+  submittedFileUrl String?
+  proofPhotoUrls   String[]         @default([])
+  courierTracking  String?
+  vendorNotes      String?          @db.Text
+  clientFeedback   String?          @db.Text
+  status           CheckpointStatus @default(PENDING)
+  submittedAt      DateTime?
+  reviewedAt       DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+  @@map("project_checkpoint")
+}

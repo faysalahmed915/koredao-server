@@ -1,0 +1,46 @@
+model Gig {
+  id                String            @id @default(cuid())
+  vendorProfileId   String
+  vendorProfile     VendorProfile     @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
+  title             String
+  slug              String            @unique
+  description       String            @db.Text
+  category          GigCategory       @default(ASSIGNMENT)
+  subjectTags       String[]          @default([])
+  coverImages       String[]          @default([])
+  tierType          GigTierType       @default(SINGLE)
+  priceFrom         Float
+  deliveryDays      Int               @default(3)
+  packages          Json
+  requiresHardcopy  Boolean           @default(false)
+  handwritingStyle  HandwritingStyle?
+  isActive          Boolean           @default(true)
+  orderCount        Int               @default(0)
+  rating            Float             @default(0.0)
+  totalReviews      Int               @default(0)
+  attachments       GigAttachment[]
+  orders            Order[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([vendorProfileId])
+  @@index([category])
+  @@index([priceFrom])
+  @@index([isActive])
+  @@map("gig")
+}
+
+model GigAttachment {
+  id           String   @id @default(cuid())
+  gigId        String
+  gig          Gig      @relation(fields: [gigId], references: [id], onDelete: Cascade)
+  fileUrl      String
+  fileName     String
+  fileType     String?
+  fileSize     Int?
+  isPublicDemo Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  @@index([gigId])
+  @@map("gig_attachment")
+}
