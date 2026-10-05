@@ -1,7 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as helmet from 'helmet';
+import helmet from 'helmet';
 
 /**
  * Configures HTTP security headers (Helmet) and Cross-Origin Resource Sharing (CORS).
