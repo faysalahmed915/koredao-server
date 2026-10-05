@@ -1,7 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import helmet from 'helmet';
+import * as helmet from 'helmet';
 
 /**
  * Configures HTTP security headers (Helmet) and Cross-Origin Resource Sharing (CORS).
@@ -26,15 +26,15 @@ export function setupSecurity(app: INestApplication): void {
     helmet({
       contentSecurityPolicy: isProduction
         ? {
-            directives: {
-              defaultSrc: ["'self'"],
-              // NOTE: unsafe-inline is commonly required by Swagger UI.
-              styleSrc: ["'self'", "'unsafe-inline'"],
-              imgSrc: ["'self'", 'data:', 'https:'],
-              scriptSrc: ["'self'"],
-              connectSrc: ["'self'", 'https:'],
-            },
-          }
+          directives: {
+            defaultSrc: ["'self'"],
+            // NOTE: unsafe-inline is commonly required by Swagger UI.
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            imgSrc: ["'self'", 'data:', 'https:'],
+            scriptSrc: ["'self'"],
+            connectSrc: ["'self'", 'https:'],
+          },
+        }
         : false,
 
       crossOriginEmbedderPolicy: isProduction,
