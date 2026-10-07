@@ -181,7 +181,10 @@ export const envSchema = z
           .filter(Boolean);
 
         const hasInsecureOrigin = origins.some(
-          (origin) => !origin.startsWith('https://'),
+          (origin) =>
+            !origin.startsWith('https://') &&
+            !origin.startsWith('http://localhost:') &&
+            !origin.startsWith('http://127.0.0.1:'),
         );
 
         if (hasInsecureOrigin) {

@@ -12,16 +12,20 @@ export function setupSecurity(app: INestApplication): void {
 
   const isProduction = configService.get<boolean>('app.isProduction', false);
 
-  const corsOrigins =
+  const configuredOrigins =
     configService.get<string[]>('security.corsOrigins') ??
     (configService.get<string>('CORS_ORIGIN') || configService.get<string>('CORS_ORIGINS'))
       ?.split(',')
       .map((origin) => origin.trim())
-      .filter(Boolean) ?? [
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'http://localhost:5173',
-    ];
+      .filter(Boolean) ?? [];
+
+  const defaultLocalOrigins = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:5173',
+  ];
+
+  const corsOrigins = Array.from(new Set([...configuredOrigins, ...defaultLocalOrigins]));
 
   const httpAdapter = app.getHttpAdapter();
   const expressApp = httpAdapter.getInstance();
@@ -83,11 +87,13 @@ export function setupSecurity(app: INestApplication): void {
         return callback(null, true);
       }
 
-      // Explicit allowlist only. Do not allow '*' with credentials:true
-      const isAllowed = corsOrigins.some(
-        (allowed) =>
-          allowed === origin || allowed === origin.replace(/\/$/, ''),
-      );
+      // Explicit allowlist only or vercel subdomains. Do not allow '*' with credentials:true
+      const isAllowed =
+        corsOrigins.some(
+          (allowed) =>
+            allowed === origin || allowed === origin.replace(/\/$/, ''),
+        ) ||
+        (Boolean(origin) && origin.startsWith('https://') && origin.endsWith('.vercel.app'));
 
       if (isAllowed) {
         return callback(null, true);
