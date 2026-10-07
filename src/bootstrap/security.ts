@@ -11,10 +11,17 @@ export function setupSecurity(app: INestApplication): void {
   const configService = app.get(ConfigService);
 
   const isProduction = configService.get<boolean>('app.isProduction', false);
-  const corsOrigins = configService.get<string[]>('security.corsOrigins', [
-    'http://localhost:5173',
-    'http://localhost:3001',
-  ]);
+
+  const corsOrigins =
+    configService.get<string[]>('security.corsOrigins') ??
+    (configService.get<string>('CORS_ORIGIN') || configService.get<string>('CORS_ORIGINS'))
+      ?.split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean) ?? [
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'http://localhost:5173',
+    ];
 
   const httpAdapter = app.getHttpAdapter();
   const expressApp = httpAdapter.getInstance();
