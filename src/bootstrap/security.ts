@@ -22,8 +22,9 @@ export function setupSecurity(app: INestApplication): void {
   // ============================================================
   // 1. HTTP SECURITY HEADERS (Helmet)
   // ============================================================
+  const helmetFn: any = typeof helmet === 'function' ? helmet : (helmet as any)?.default;
   expressApp.use(
-    helmet({
+    helmetFn({
       contentSecurityPolicy: isProduction
         ? {
           directives: {
