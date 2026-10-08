@@ -3,7 +3,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 
 const BASE_URL = 'http://localhost:3000';
 const API_URL = `${BASE_URL}/api/v1`;
-const AUTH_URL = `${BASE_URL}/api/auth`;
+const NEXT_PUBLIC_AUTH_URL = `${BASE_URL}/api/auth`;
 
 const TEST_EMAIL = `test.security.${Date.now()}@example.com`;
 const TEST_PASSWORD = 'SuperSecureP@ssw0rd123!';
@@ -85,7 +85,7 @@ async function run() {
 
     // 3. Better Auth - Registration Flow
     console.log('\n--- 3. Testing Better Auth Registration ---');
-    const signUpRes = await fetch(`${AUTH_URL}/sign-up/email`, {
+    const signUpRes = await fetch(`${NEXT_PUBLIC_AUTH_URL}/sign-up/email`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -147,14 +147,14 @@ async function run() {
       });
       const meData = await meAuth.json();
       record('betterAuth', 'Protected Route Accepts Valid Session', meAuth.ok, `Status: ${meAuth.status}, User: ${meData?.data?.user?.email || meData?.user?.email || 'N/A'}`);
-      
+
       const payloadString = JSON.stringify(meData);
       record('dataSanitization', 'No Password Leakage in User API', !payloadString.includes(TEST_PASSWORD) && !payloadString.includes('password'), 'Password never leaked in response');
     }
 
     // 5. Better Auth - Sign In Flow & Invalid Credential Protection
     console.log('\n--- 5. Testing Sign-In Security ---');
-    const badLoginRes = await fetch(`${AUTH_URL}/sign-in/email`, {
+    const badLoginRes = await fetch(`${NEXT_PUBLIC_AUTH_URL}/sign-in/email`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -167,7 +167,7 @@ async function run() {
     });
     record('betterAuth', 'Reject Wrong Password', !badLoginRes.ok, `Status: ${badLoginRes.status} (Expected 4xx)`);
 
-    const goodLoginRes = await fetch(`${AUTH_URL}/sign-in/email`, {
+    const goodLoginRes = await fetch(`${NEXT_PUBLIC_AUTH_URL}/sign-in/email`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -194,7 +194,7 @@ async function run() {
     // Clean up test data
     if (createdUserId) {
       console.log('\n--- Cleaning up test user from Neon DB ---');
-      await prisma.user.delete({ where: { id: createdUserId } }).catch(() => {});
+      await prisma.user.delete({ where: { id: createdUserId } }).catch(() => { });
       console.log('✅ Test user cleanly deleted from Neon DB.');
     }
     await prisma.$disconnect();
