@@ -23,6 +23,7 @@ export function setupSecurity(app: INestApplication): void {
     'http://localhost:3000',
     'http://localhost:3001',
     'http://localhost:5173',
+    'https://koredao-server.onrender.com',
   ];
 
   const corsOrigins = Array.from(new Set([...configuredOrigins, ...defaultLocalOrigins]));
@@ -117,7 +118,7 @@ export function setupSecurity(app: INestApplication): void {
       'x-better-auth-agent',
     ],
 
-    exposedHeaders: ['x-correlation-id', 'Set-Cookie'],
+    exposedHeaders: ['x-correlation-id', 'Set-Cookie', 'set-auth-token'],
 
     maxAge: 86400,
   });

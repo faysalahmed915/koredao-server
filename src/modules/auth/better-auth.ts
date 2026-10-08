@@ -1,5 +1,6 @@
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from '@better-auth/prisma-adapter';
+import { bearer } from 'better-auth/plugins';
 
 import type { ConfigType } from '@nestjs/config';
 
@@ -11,6 +12,8 @@ export const createBetterAuth = (
   prisma: PrismaService,
   config: ConfigType<typeof authConfig>,
 ) => {
+  const isHttps = config.url?.startsWith('https') || process.env.NODE_ENV === 'production';
+
   return betterAuth({
     database: prismaAdapter(prisma, {
       provider: 'postgresql',
@@ -20,6 +23,8 @@ export const createBetterAuth = (
     baseURL: config.url,
     basePath: config.basePath,
     trustedOrigins: config.trustedOrigins,
+
+    plugins: [bearer()],
 
     emailAndPassword: {
       enabled: true,
@@ -49,6 +54,11 @@ export const createBetterAuth = (
     advanced: {
       database: {
         joins: true,
+      },
+      defaultCookieAttributes: {
+        sameSite: isHttps ? 'none' : 'lax',
+        secure: isHttps,
+        partitioned: isHttps,
       },
     },
   });

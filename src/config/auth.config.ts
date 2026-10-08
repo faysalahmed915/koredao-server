@@ -14,12 +14,22 @@ export const authConfig = registerAs('auth', () => ({
   basePath: process.env.AUTH_BASE_PATH || '/api/auth',
 
   // Explicit browser origins trusted by Better Auth.
-  trustedOrigins: (
-    process.env.BETTER_AUTH_TRUSTED_ORIGINS || ''
-  )
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean),
+  trustedOrigins: Array.from(
+    new Set([
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'http://localhost:5173',
+      ...(process.env.BETTER_AUTH_URL ? [process.env.BETTER_AUTH_URL] : []),
+      ...(process.env.BETTER_AUTH_TRUSTED_ORIGINS || '')
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean),
+      ...(process.env.CORS_ORIGIN || '')
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean),
+    ]),
+  ),
 
   // Google / Gmail OAuth
   google: {

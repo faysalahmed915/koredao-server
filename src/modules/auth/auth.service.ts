@@ -8,6 +8,7 @@ import {
 import { fromNodeHeaders } from 'better-auth/node';
 import type { IncomingHttpHeaders } from 'node:http';
 
+import { PrismaService } from '../../core/database/prisma.service.js';
 import { BETTER_AUTH } from './auth.constants.js';
 import type { Auth } from './better-auth.js';
 import type { RegisterDto } from './dto/register.dto.js';
@@ -25,6 +26,7 @@ export class AuthService {
   constructor(
     @Inject(BETTER_AUTH)
     private readonly auth: Auth,
+    private readonly prisma: PrismaService,
   ) { }
 
   get instance(): Auth {
@@ -190,12 +192,54 @@ export class AuthService {
 
   /**
    * Validates and returns active session data for incoming request headers.
+   * Supports both Better-Auth native cookie/bearer resolution and direct DB session validation.
    */
   async getSession(headers: IncomingHttpHeaders | Headers) {
     const parsedHeaders = this.normalizeHeaders(headers);
 
-    return this.auth.api.getSession({
-      headers: parsedHeaders,
-    });
+    try {
+      const session = await this.auth.api.getSession({
+        headers: parsedHeaders,
+      });
+
+      if (session?.user) {
+        return session;
+      }
+    } catch (err) {
+      this.logger.debug(`Better-Auth getSession attempt encountered: ${err}`);
+    }
+
+    // Resilient fallback: If cookie was blocked/stripped by cross-origin policies,
+    // verify Authorization header directly against active sessions in PostgreSQL.
+    const authHeader =
+      parsedHeaders.get('authorization') || parsedHeaders.get('Authorization');
+
+    if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+      const tokenWithSig = authHeader.slice(7).trim();
+      const rawToken = tokenWithSig.includes('.')
+        ? tokenWithSig.split('.')[0]
+        : tokenWithSig;
+
+      if (rawToken) {
+        try {
+          const dbSession = await this.prisma.session.findUnique({
+            where: { token: rawToken },
+            include: { user: true },
+          });
+
+          if (dbSession && new Date(dbSession.expiresAt) > new Date()) {
+            const { user, ...sessionData } = dbSession;
+            return {
+              session: sessionData,
+              user,
+            };
+          }
+        } catch (dbErr) {
+          this.logger.warn(`Failed direct database session resolution: ${dbErr}`);
+        }
+      }
+    }
+
+    return null;
   }
 }
