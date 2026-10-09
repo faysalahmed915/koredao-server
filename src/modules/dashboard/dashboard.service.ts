@@ -30,7 +30,7 @@ export class DashboardService {
       userRole === UserRole.SUPER_ADMIN ||
       userRole === UserRole.MODERATOR
     ) {
-      return this.getAdminMetrics();
+      return this.getAdminMetrics(userRole);
     }
 
     if (userRole === UserRole.VENDOR) {
@@ -330,7 +330,7 @@ export class DashboardService {
   /**
    * Aggregates Super Admin / Moderator Command Center metrics
    */
-  private async getAdminMetrics(): Promise<AdminDashboardMetrics> {
+  private async getAdminMetrics(adminRole: UserRole = UserRole.ADMIN): Promise<AdminDashboardMetrics> {
     const [
       totalUsers,
       totalVendors,
@@ -388,7 +388,7 @@ export class DashboardService {
     const totalGMV = completedOrders.reduce((sum, o) => sum + o.totalAmount, 0);
 
     return {
-      role: 'ADMIN',
+      role: adminRole as 'ADMIN' | 'SUPER_ADMIN' | 'MODERATOR',
       stats: {
         totalUsers,
         totalVendors,

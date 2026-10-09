@@ -180,6 +180,14 @@ export class UsersService {
             createdAt: true,
           },
         },
+        vendorProfile: {
+          include: {
+            handwritingSamples: {
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        },
+        customerProfile: true,
       },
     });
 
