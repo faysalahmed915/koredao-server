@@ -342,7 +342,7 @@ describe('DashboardService', () => {
         },
       ]);
 
-      const res = await service.getMetrics('admin-1', UserRole.SUPER_ADMIN);
+      const res = await service.getMetrics('admin-1', UserRole.ADMIN);
 
       expect(res.role).toBe('ADMIN');
       if (res.role === 'ADMIN') {
@@ -357,6 +357,9 @@ describe('DashboardService', () => {
         expect(res.disputedOrders.length).toBe(1);
         expect(res.recentTransactions.length).toBe(1);
       }
+
+      const resSuper = await service.getMetrics('admin-1', UserRole.SUPER_ADMIN);
+      expect(resSuper.role).toBe('SUPER_ADMIN');
     });
   });
 });

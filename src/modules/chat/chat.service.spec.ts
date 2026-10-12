@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ChatService, checkSafetyLeakage } from './chat.service.js';
 import { PrismaService } from '../../core/database/prisma.service.js';
@@ -24,6 +24,9 @@ describe('ChatService', () => {
       create: ReturnType<typeof vi.fn>;
       findMany: ReturnType<typeof vi.fn>;
     };
+    projectCheckpoint: {
+      findUnique: ReturnType<typeof vi.fn>;
+    };
     $transaction: ReturnType<typeof vi.fn>;
   };
 
@@ -45,6 +48,9 @@ describe('ChatService', () => {
       chatMessage: {
         create: vi.fn(),
         findMany: vi.fn(),
+      },
+      projectCheckpoint: {
+        findUnique: vi.fn(),
       },
       $transaction: vi.fn().mockImplementation((arr) => Promise.all(arr)),
     };
@@ -175,6 +181,105 @@ describe('ChatService', () => {
           content: 'Hello',
         }),
       ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should link a checkpoint target when it belongs to the conversation order', async () => {
+      prisma.conversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        orderId: 'ord-1',
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vend-1' },
+      });
+      prisma.projectCheckpoint.findUnique.mockResolvedValue({
+        id: 'cp-1',
+        orderId: 'ord-1',
+        title: 'Outline & References',
+      });
+      prisma.chatMessage.create.mockResolvedValue({
+        id: 'msg-1',
+        content: 'Attaching the outline draft.',
+        checkpoint: { id: 'cp-1', title: 'Outline & References' },
+      });
+      prisma.conversation.update.mockResolvedValue({});
+
+      await service.sendMessage('cust-1', {
+        conversationId: 'conv-1',
+        content: 'Attaching the outline draft.',
+        checkpointId: 'cp-1',
+      });
+
+      expect(prisma.chatMessage.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ checkpointId: 'cp-1' }),
+        }),
+      );
+    });
+
+    it('should reject a checkpoint target that belongs to a different order', async () => {
+      prisma.conversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        orderId: 'ord-1',
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vend-1' },
+      });
+      prisma.projectCheckpoint.findUnique.mockResolvedValue({
+        id: 'cp-other',
+        orderId: 'ord-2',
+        title: 'Unrelated',
+      });
+
+      await expect(
+        service.sendMessage('cust-1', {
+          conversationId: 'conv-1',
+          content: 'Wrong order target',
+          checkpointId: 'cp-other',
+        }),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should reject a checkpoint target in a pre-order (non-order) conversation', async () => {
+      prisma.conversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        orderId: null,
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vend-1' },
+      });
+
+      await expect(
+        service.sendMessage('cust-1', {
+          conversationId: 'conv-1',
+          content: 'No order here',
+          checkpointId: 'cp-1',
+        }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('should flag a message when an off-platform contact link is shared as an attachment', async () => {
+      prisma.conversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vend-1' },
+      });
+      prisma.chatMessage.create.mockResolvedValue({
+        id: 'msg-1',
+        content: 'Shared an attachment',
+        attachments: ['https://wa.me/somehandle'],
+        hasSafetyWarning: true,
+      });
+      prisma.conversation.update.mockResolvedValue({});
+
+      const res = await service.sendMessage('cust-1', {
+        conversationId: 'conv-1',
+        content: 'Shared an attachment',
+        attachments: ['https://wa.me/somehandle'],
+      });
+
+      expect(res.hasSafetyWarning).toBe(true);
+      expect(prisma.chatMessage.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ hasSafetyWarning: true }),
+        }),
+      );
     });
   });
 });

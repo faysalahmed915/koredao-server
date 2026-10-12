@@ -23,6 +23,11 @@ export class TransformInterceptor<T>
     context: ExecutionContext,
     next: CallHandler,
   ): Observable<ResponseEnvelope<T> | T> {
+    // WebSocket events are not HTTP responses; pass through untouched.
+    if (context.getType() !== 'http') {
+      return next.handle();
+    }
+
     const response = context.switchToHttp().getResponse<Response>();
 
     return next.handle().pipe(

@@ -59,13 +59,16 @@ async function seed() {
       emailVerified: true,
       role: UserRole.SUPER_ADMIN,
       image: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&q=80',
-      accounts: {
-        create: {
-          accountId: 'admin@koredao.com',
-          providerId: 'credential',
-          password: defaultPasswordHash,
-        },
-      },
+    },
+  });
+  // Better-Auth matches credential accounts where accountId === user.id, so the
+  // accountId must be the user's CUID (NOT the email) for sign-in to succeed.
+  await prisma.account.create({
+    data: {
+      accountId: adminUser.id,
+      providerId: 'credential',
+      userId: adminUser.id,
+      password: defaultPasswordHash,
     },
   });
   console.log('👑 Admin created:', adminUser.email);
@@ -510,13 +513,6 @@ async function seed() {
         emailVerified: true,
         role: UserRole.VENDOR,
         image: cfg.image,
-        accounts: {
-          create: {
-            accountId: cfg.email,
-            providerId: 'credential',
-            password: defaultPasswordHash,
-          },
-        },
         vendorProfile: {
           create: {
             university: cfg.university,
@@ -578,6 +574,16 @@ async function seed() {
       },
       include: {
         vendorProfile: true,
+      },
+    });
+
+    // Credential account: accountId MUST equal the user's CUID for Better-Auth sign-in.
+    await prisma.account.create({
+      data: {
+        accountId: user.id,
+        providerId: 'credential',
+        userId: user.id,
+        password: defaultPasswordHash,
       },
     });
 
@@ -653,13 +659,6 @@ async function seed() {
         emailVerified: true,
         role: UserRole.CUSTOMER,
         image: c.image,
-        accounts: {
-          create: {
-            accountId: c.email,
-            providerId: 'credential',
-            password: defaultPasswordHash,
-          },
-        },
         customerProfile: {
           create: {
             university: c.university,
@@ -671,6 +670,16 @@ async function seed() {
       },
       include: {
         customerProfile: true,
+      },
+    });
+
+    // Credential account: accountId MUST equal the user's CUID for Better-Auth sign-in.
+    await prisma.account.create({
+      data: {
+        accountId: user.id,
+        providerId: 'credential',
+        userId: user.id,
+        password: defaultPasswordHash,
       },
     });
 

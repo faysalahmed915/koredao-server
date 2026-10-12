@@ -15,6 +15,7 @@ model ProjectCheckpoint {
   reviewedAt       DateTime?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
+  chatMessages     ChatMessage[]
 
   @@index([orderId])
   @@index([status])

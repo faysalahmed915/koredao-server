@@ -28,4 +28,13 @@ export class SendMessageDto {
   @IsArray()
   @IsString({ each: true })
   attachments?: string[];
+
+  @ApiProperty({
+    example: 'clxyz0987654321',
+    description: 'Optional milestone checkpoint CUID to reference as a chat target',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  checkpointId?: string;
 }

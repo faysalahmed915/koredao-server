@@ -44,6 +44,11 @@ export class LoggingInterceptor implements NestInterceptor {
   }
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
+    // WebSocket events have no HTTP request/response; skip HTTP-only logging.
+    if (context.getType() !== 'http') {
+      return next.handle();
+    }
+
     const ctx = context.switchToHttp();
     const request = ctx.getRequest<Request & { correlationId?: string }>();
     const response = ctx.getResponse<Response>();

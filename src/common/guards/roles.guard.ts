@@ -33,6 +33,12 @@ export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) { }
 
   canActivate(context: ExecutionContext): boolean {
+    // RBAC metadata is defined on HTTP controllers. WebSocket gateways do not
+    // carry route params / user context in the same shape, so skip them.
+    if (context.getType() !== 'http') {
+      return true;
+    }
+
     const handler = context.getHandler();
     const targetClass = context.getClass();
 

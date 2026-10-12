@@ -5,6 +5,7 @@ import {
   ConflictException,
   Logger,
 } from '@nestjs/common';
+import type { Server } from 'socket.io';
 import { PrismaService } from '../../core/database/prisma.service.js';
 import { CreateOrGetConversationDto } from './dto/create-or-get-conversation.dto.js';
 import { SendMessageDto } from './dto/send-message.dto.js';
@@ -37,7 +38,32 @@ export function checkSafetyLeakage(content: string): { hasWarning: boolean; note
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
 
+  /**
+   * Injected by ChatGateway after the Socket.io server is initialized so that
+   * REST-created messages are also broadcast live to the conversation room.
+   * (Setter injection avoids a circular dependency between service & gateway.)
+   */
+  private socketServer?: Server;
+
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Called by the ChatGateway on init to register the live Socket.io server.
+   */
+  setSocketServer(server: Server): void {
+    this.socketServer = server;
+  }
+
+  /**
+   * Emits a newly created message to everyone currently joined to the
+   * conversation room (best-effort; safe to call when no WS server is set).
+   */
+  private broadcastNewMessage(conversationId: string, message: unknown): void {
+    if (!this.socketServer) return;
+    this.socketServer
+      .to(`conversation_${conversationId}`)
+      .emit('new_message', message);
+  }
 
   /**
    * Retrieves or initializes a conversation between client and helper (order-scoped or pre-order inquiry)
@@ -216,6 +242,9 @@ export class ChatService {
       orderBy: { createdAt: 'asc' },
       include: {
         sender: { select: { id: true, name: true, image: true } },
+        checkpoint: {
+          select: { id: true, title: true, targetDate: true, status: true },
+        },
       },
     });
   }
@@ -240,7 +269,34 @@ export class ChatService {
       throw new ForbiddenException('You are not authorized to send messages in this conversation');
     }
 
-    const safetyCheck = checkSafetyLeakage(dto.content);
+    // Validate the optional milestone checkpoint "target" reference.
+    // A checkpoint may only be linked if it belongs to the same order as the
+    // conversation (order-scoped chats only — pre-order inquiries have no order).
+    let checkpointId: string | null = null;
+    if (dto.checkpointId) {
+      if (!conv.orderId) {
+        throw new ConflictException(
+          'Milestone targets can only be referenced in order-scoped conversations',
+        );
+      }
+
+      const checkpoint = await this.prisma.projectCheckpoint.findUnique({
+        where: { id: dto.checkpointId },
+      });
+
+      if (!checkpoint || checkpoint.orderId !== conv.orderId) {
+        throw new ForbiddenException(
+          'The referenced milestone checkpoint does not belong to this order',
+        );
+      }
+
+      checkpointId = checkpoint.id;
+    }
+
+    // Include attachment URLs in the leakage scan so external-contact links
+    // shared as "files" are still flagged.
+    const scanText = [dto.content, ...(dto.attachments || [])].join(' ');
+    const safetyCheck = checkSafetyLeakage(scanText);
     const now = new Date();
 
     const [message] = await this.prisma.$transaction([
@@ -250,11 +306,15 @@ export class ChatService {
           senderId: userId,
           content: dto.content,
           attachments: dto.attachments || [],
+          checkpointId,
           hasSafetyWarning: safetyCheck.hasWarning,
           safetyWarningNote: safetyCheck.note || null,
         },
         include: {
           sender: { select: { id: true, name: true, image: true } },
+          checkpoint: {
+            select: { id: true, title: true, targetDate: true, status: true },
+          },
         },
       }),
       this.prisma.conversation.update({
@@ -266,6 +326,11 @@ export class ChatService {
     if (safetyCheck.hasWarning) {
       this.logger.warn(`Safety alert triggered in conversation=${dto.conversationId} by user=${userId}`);
     }
+
+    // Broadcast live to the conversation room so all joined participants receive
+    // the message in real time (covers the REST send path, which previously
+    // only relied on the WebSocket handler).
+    this.broadcastNewMessage(dto.conversationId, message);
 
     return message;
   }

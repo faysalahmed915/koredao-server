@@ -23,6 +23,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
 
   catch(exception: unknown, host: ArgumentsHost): void {
+    // This filter only formats HTTP responses. WebSocket/RPC contexts have
+    // their own error channels and are handled by NestJS's WS exception layer.
+    if (host.getType() !== 'http') {
+      if (exception instanceof Error) {
+        this.logger.error(`WS/RPC exception: ${exception.message}`);
+      }
+      return;
+    }
+
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request & { correlationId?: string }>();

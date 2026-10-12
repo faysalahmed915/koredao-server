@@ -16,6 +16,7 @@ describe('RolesGuard', () => {
     params: Record<string, string> = {},
   ): ExecutionContext => {
     return {
+      getType: () => 'http',
       getHandler: vi.fn(),
       getClass: vi.fn(),
       switchToHttp: () => ({
@@ -39,6 +40,25 @@ describe('RolesGuard', () => {
     const ctx = createMockContext({ id: 'user-1', role: UserRole.CUSTOMER });
 
     expect(guard.canActivate(ctx)).toBe(true);
+  });
+
+  it('should skip RBAC enforcement for non-HTTP (WebSocket) contexts', () => {
+    reflector.getAllAndOverride.mockImplementation((key) => {
+      if (key === ROLES_KEY) return [UserRole.ADMIN];
+      return undefined;
+    });
+
+    const wsContext = {
+      getType: () => 'ws',
+      getHandler: vi.fn(),
+      getClass: vi.fn(),
+      switchToWs: () => ({
+        getClient: vi.fn(),
+        getData: vi.fn(),
+      }),
+    } as unknown as ExecutionContext;
+
+    expect(guard.canActivate(wsContext)).toBe(true);
   });
 
   it('should throw ForbiddenException if user is not authenticated or lacks a role', () => {
