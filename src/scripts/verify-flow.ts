@@ -87,6 +87,7 @@ async function main() {
     check('User role promoted CUSTOMER -> VENDOR on approval', promoted?.role === 'VENDOR');
 
     const vendorProfile = await prisma.vendorProfile.findUnique({ where: { userId: vendorUser.id } });
+    if (!vendorProfile) throw new Error('Expected vendor profile to exist after approval');
 
     // 3. Customer posts a job
     console.log('\n3. Customer posts a job');
