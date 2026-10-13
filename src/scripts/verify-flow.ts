@@ -169,6 +169,21 @@ async function main() {
     const msgs = await chat.getMessages(vendorUser.id, orderConv.id);
     check('Order-scoped chat has messages', msgs.length === 2);
 
+    // 5b. Read receipts: vendor's incoming messages start unread, then customer reads them.
+    const unreadBefore = await chat.getMessages(customer.id, orderConv.id);
+    const hadUnread = unreadBefore.some((m: any) => !m.isRead && m.senderId !== customer.id);
+    check('Incoming messages start unread', hadUnread);
+    const readResult = await chat.markConversationRead(customer.id, orderConv.id);
+    check('markConversationRead updated >=1 message', readResult.updatedCount >= 1);
+    const afterRead = await chat.getMessages(customer.id, orderConv.id);
+    check('All incoming messages now read', afterRead.every((m: any) => m.senderId === customer.id || m.isRead));
+
+    // 5c. Presence: updatePresence stamps lastSeenAt.
+    const presence = await chat.updatePresence(vendorUser.id);
+    check('Presence heartbeat returns lastSeenAt', !!presence.lastSeenAt);
+    const vendorRow = await prisma.user.findUnique({ where: { id: vendorUser.id } });
+    check('User.lastSeenAt persisted', !!vendorRow?.lastSeenAt);
+
     // 6. Target sidebar (pre-payment) + customer approval
     console.log('\n6. Target sidebar (pre-payment) + customer approval');
     const cp = await milestones.createCheckpoint(vendorUser.id, {
