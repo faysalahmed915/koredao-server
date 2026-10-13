@@ -92,10 +92,31 @@ describe('MilestonesService', () => {
       ).rejects.toThrow(ForbiddenException);
     });
 
-    it('should throw ConflictException if order is not in active status', async () => {
+    it('should allow creating a target checkpoint while order is PENDING_PAYMENT (pre-payment target sidebar)', async () => {
       prisma.order.findUnique.mockResolvedValue({
         id: 'ord-1',
         status: OrderStatus.PENDING_PAYMENT,
+        vendorProfile: { userId: 'vend-1' },
+      });
+      prisma.projectCheckpoint.create.mockResolvedValue({
+        id: 'cp-1',
+        orderId: 'ord-1',
+        title: 'Draft',
+        status: CheckpointStatus.PENDING,
+      });
+
+      const res = await service.createCheckpoint('vend-1', {
+        orderId: 'ord-1',
+        title: 'Draft',
+      });
+
+      expect(res.id).toBe('cp-1');
+    });
+
+    it('should throw ConflictException if order is in a non-actionable status (e.g. COMPLETED)', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'ord-1',
+        status: OrderStatus.COMPLETED,
         vendorProfile: { userId: 'vend-1' },
       });
 
@@ -246,6 +267,87 @@ describe('MilestonesService', () => {
       await expect(
         service.deleteCheckpoint('vend-1', 'cp-1'),
       ).rejects.toThrow(ConflictException);
+    });
+  });
+
+  describe('approveTarget', () => {
+    it('should let the customer approve a pending target and move it to IN_PROGRESS', async () => {
+      prisma.projectCheckpoint.findUnique.mockResolvedValue({
+        id: 'cp-1',
+        status: CheckpointStatus.PENDING,
+        approvedAt: null,
+        order: { customerId: 'cust-1' },
+      });
+      prisma.projectCheckpoint.update.mockResolvedValue({
+        id: 'cp-1',
+        status: CheckpointStatus.IN_PROGRESS,
+        approvedAt: new Date(),
+      });
+
+      const res = await service.approveTarget('cust-1', 'cp-1');
+
+      expect(res.status).toBe(CheckpointStatus.IN_PROGRESS);
+      expect(prisma.projectCheckpoint.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'cp-1' },
+          data: expect.objectContaining({
+            approvedAt: expect.any(Date),
+            status: CheckpointStatus.IN_PROGRESS,
+          }),
+        }),
+      );
+    });
+
+    it('should throw ForbiddenException if a non-customer tries to approve a target', async () => {
+      prisma.projectCheckpoint.findUnique.mockResolvedValue({
+        id: 'cp-1',
+        status: CheckpointStatus.PENDING,
+        approvedAt: null,
+        order: { customerId: 'cust-1' },
+      });
+
+      await expect(service.approveTarget('stranger', 'cp-1')).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('should throw ConflictException if the target is not PENDING', async () => {
+      prisma.projectCheckpoint.findUnique.mockResolvedValue({
+        id: 'cp-1',
+        status: CheckpointStatus.SUBMITTED,
+        approvedAt: null,
+        order: { customerId: 'cust-1' },
+      });
+
+      await expect(service.approveTarget('cust-1', 'cp-1')).rejects.toThrow(
+        ConflictException,
+      );
+    });
+  });
+
+  describe('getOrderCheckpoints (staff access)', () => {
+    it('should allow a moderator to read checkpoints for any order', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'ord-1',
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vend-1' },
+      });
+      prisma.projectCheckpoint.findMany.mockResolvedValue([{ id: 'cp-1' }]);
+
+      const res = await service.getOrderCheckpoints('staff-1', 'ord-1', 'MODERATOR');
+      expect(res).toEqual([{ id: 'cp-1' }]);
+    });
+
+    it('should forbid a stranger (non-participant, non-staff) from reading checkpoints', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'ord-1',
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vend-1' },
+      });
+
+      await expect(
+        service.getOrderCheckpoints('stranger', 'ord-1', 'CUSTOMER'),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 });

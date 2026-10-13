@@ -108,14 +108,37 @@ export class OrdersController {
   @ApiCookieAuth('better-auth.session_token')
   @ApiOperation({
     summary: 'Confirm payment and lock funds in escrow (Sandbox / IPN handler)',
+    description:
+      'Authenticated callers must be the order customer (or an admin/moderator). Real gateway confirmations flow through the payment IPN callbacks.',
   })
   @ApiParam({ name: 'id', description: 'Order CUID' })
   @ApiResponse({ status: 200, description: 'Escrow funded successfully. Status updated to ESCROW_HELD.' })
+  @ApiResponse({ status: 403, description: 'Forbidden: caller does not own this order.' })
   fundEscrow(
+    @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: MockFundEscrowDto,
   ) {
-    return this.ordersService.fundEscrow(id, dto.paymentGateway, dto.transactionRef);
+    return this.ordersService.fundEscrow(id, dto.paymentGateway, dto.transactionRef, user.id);
+  }
+
+  @Post(':id/vendor-accept')
+  @HttpCode(HttpStatus.OK)
+  @MinRole(UserRole.VENDOR)
+  @ApiCookieAuth('better-auth.session_token')
+  @ApiOperation({
+    summary: 'Helper accepts a gig-order opened by a customer (pre-payment agreement handshake)',
+    description:
+      'Records the helper\'s agreement to take the job. This does NOT activate the job — the order stays PENDING_PAYMENT until the customer funds escrow.',
+  })
+  @ApiParam({ name: 'id', description: 'Order CUID' })
+  @ApiResponse({ status: 200, description: 'Order accepted by helper.' })
+  @ApiResponse({ status: 403, description: 'Forbidden: not the assigned helper.' })
+  vendorAcceptOrder(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.ordersService.vendorAcceptOrder(user.id, id);
   }
 
   @Post(':id/deliver')

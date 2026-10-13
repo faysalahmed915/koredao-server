@@ -22,6 +22,7 @@ import type { AuthenticatedUser } from '../../common/decorators/current-user.dec
 import { Public } from '../../common/decorators/public.decorator.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { MinRole } from '../../common/decorators/min-role.decorator.js';
+import { Roles } from '../../common/decorators/roles.decorator.js';
 import { UserRole } from '@prisma/client';
 
 import { AssignmentsService } from './assignments.service.js';
@@ -38,13 +39,16 @@ export class AssignmentsController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @Roles(UserRole.CUSTOMER)
   @ApiCookieAuth('better-auth.session_token')
   @ApiOperation({
     summary: 'Post a new assignment / project request (Upwork model)',
-    description: 'Creates an open academic request that verified helpers can bid on.',
+    description: 'Creates an open academic request that verified helpers can bid on. Restricted to students/customers.',
   })
   @ApiResponse({ status: 201, description: 'Assignment posted successfully.' })
   @ApiResponse({ status: 400, description: 'Validation failed.' })
+  @ApiResponse({ status: 403, description: 'Forbidden: only customers may post jobs.' })
+  @ApiResponse({ status: 409, description: 'Weekly or active job posting limit reached.' })
   create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateAssignmentDto,

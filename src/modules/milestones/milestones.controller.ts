@@ -51,14 +51,35 @@ export class MilestonesController {
   @ApiCookieAuth('better-auth.session_token')
   @ApiOperation({
     summary: 'Get all milestone checkpoints for an order',
+    description:
+      'Accessible to the client, assigned helper, and moderation staff (MODERATOR/ADMIN/SUPER_ADMIN) for auditing target-sidebar history.',
   })
   @ApiParam({ name: 'orderId', description: 'Order CUID' })
   @ApiResponse({ status: 200, description: 'Milestones retrieved successfully.' })
+  @ApiResponse({ status: 403, description: 'Forbidden: not a participant or staff.' })
   getOrderCheckpoints(
     @CurrentUser() user: AuthenticatedUser,
     @Param('orderId') orderId: string,
   ) {
-    return this.milestonesService.getOrderCheckpoints(user.id, orderId);
+    return this.milestonesService.getOrderCheckpoints(user.id, orderId, user.role);
+  }
+
+  @Post(':id/approve-target')
+  @HttpCode(HttpStatus.OK)
+  @ApiCookieAuth('better-auth.session_token')
+  @ApiOperation({
+    summary: 'Customer approves a target/milestone definition (pre-payment agreement)',
+    description:
+      'Records the customer\'s approval of a helper-defined target before escrow funding.',
+  })
+  @ApiParam({ name: 'id', description: 'Checkpoint CUID' })
+  @ApiResponse({ status: 200, description: 'Target approved.' })
+  @ApiResponse({ status: 403, description: 'Forbidden: not the order customer.' })
+  approveTarget(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.milestonesService.approveTarget(user.id, id);
   }
 
   @Post(':id/submit')

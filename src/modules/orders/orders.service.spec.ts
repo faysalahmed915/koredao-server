@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { OrdersService } from './orders.service.js';
 import { PrismaService } from '../../core/database/prisma.service.js';
@@ -162,6 +162,64 @@ describe('OrdersService', () => {
           data: { status: OrderStatus.ESCROW_HELD },
         }),
       );
+    });
+
+    it('should throw ForbiddenException when a non-owner actor tries to fund the order', async () => {
+      const mockOrder = {
+        id: 'ord-1',
+        totalAmount: 1000,
+        status: OrderStatus.PENDING_PAYMENT,
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vendor-1' },
+      };
+      prisma.order.findUnique.mockResolvedValue(mockOrder);
+
+      await expect(
+        service.fundEscrow('ord-1', 'AAMARPAY', 'TXN', 'attacker-1'),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('vendorAcceptOrder', () => {
+    it('should let the assigned helper accept a PENDING_PAYMENT gig-order', async () => {
+      const mockOrder = {
+        id: 'ord-1',
+        orderNumber: 'ORD-1',
+        status: OrderStatus.PENDING_PAYMENT,
+        customerId: 'cust-1',
+        vendorAcceptedAt: null,
+        vendorProfile: { userId: 'vendor-1' },
+      };
+      prisma.order.findUnique.mockResolvedValue(mockOrder);
+      prisma.order.update.mockResolvedValue({ ...mockOrder, vendorAcceptedAt: new Date() });
+
+      const res = await service.vendorAcceptOrder('vendor-1', 'ord-1');
+
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'ord-1' },
+          data: { vendorAcceptedAt: expect.any(Date) },
+        }),
+      );
+      expect(res).toBeTruthy();
+    });
+
+    it('should throw ForbiddenException when a non-assigned user tries to accept', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'ord-1',
+        orderNumber: 'ORD-1',
+        status: OrderStatus.PENDING_PAYMENT,
+        customerId: 'cust-1',
+        vendorAcceptedAt: null,
+        vendorProfile: { userId: 'vendor-1' },
+      });
+
+      await expect(service.vendorAcceptOrder('stranger', 'ord-1')).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(prisma.order.update).not.toHaveBeenCalled();
     });
   });
 

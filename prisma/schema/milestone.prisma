@@ -11,6 +11,8 @@ model ProjectCheckpoint {
   vendorNotes      String?          @db.Text
   clientFeedback   String?          @db.Text
   status           CheckpointStatus @default(PENDING)
+  // Customer approval of the target DEFINITION itself (separate from work review).
+  approvedAt       DateTime?
   submittedAt      DateTime?
   reviewedAt       DateTime?
   createdAt        DateTime         @default(now())

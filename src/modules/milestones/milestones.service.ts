@@ -9,7 +9,17 @@ import { PrismaService } from '../../core/database/prisma.service.js';
 import { CreateCheckpointDto } from './dto/create-checkpoint.dto.js';
 import { SubmitCheckpointProgressDto } from './dto/submit-checkpoint-progress.dto.js';
 import { ReviewCheckpointDto, CheckpointReviewDecision } from './dto/review-checkpoint.dto.js';
-import { CheckpointStatus, OrderStatus } from '@prisma/client';
+import { CheckpointStatus, OrderStatus, UserRole } from '@prisma/client';
+
+/** Roles permitted to audit any order's checkpoints (read-only moderation). */
+const STAFF_ROLES: UserRole[] = [
+  UserRole.SUPER_ADMIN,
+  UserRole.ADMIN,
+  UserRole.MODERATOR,
+];
+
+const isStaffRole = (role?: UserRole | string): boolean =>
+  !!role && STAFF_ROLES.includes(role as UserRole);
 
 @Injectable()
 export class MilestonesService {
@@ -35,11 +45,12 @@ export class MilestonesService {
     }
 
     if (
+      order.status !== OrderStatus.PENDING_PAYMENT &&
       order.status !== OrderStatus.ESCROW_HELD &&
       order.status !== OrderStatus.IN_PROGRESS
     ) {
       throw new ConflictException(
-        `Checkpoints can only be created while order is in ESCROW_HELD or IN_PROGRESS status (current: ${order.status})`,
+        `Checkpoints can only be created while order is in PENDING_PAYMENT, ESCROW_HELD or IN_PROGRESS status (current: ${order.status})`,
       );
     }
 
@@ -61,9 +72,15 @@ export class MilestonesService {
   }
 
   /**
-   * Retrieves all checkpoints for an order (Accessible to client or assigned helper)
+   * Retrieves all checkpoints for an order.
+   * Accessible to the client, the assigned helper, and moderation staff
+   * (MODERATOR / ADMIN / SUPER_ADMIN) for audit purposes.
    */
-  async getOrderCheckpoints(userId: string, orderId: string) {
+  async getOrderCheckpoints(
+    userId: string,
+    orderId: string,
+    role?: UserRole | string,
+  ) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: { vendorProfile: true },
@@ -76,7 +93,7 @@ export class MilestonesService {
     const isCustomer = order.customerId === userId;
     const isVendor = order.vendorProfile.userId === userId;
 
-    if (!isCustomer && !isVendor) {
+    if (!isCustomer && !isVendor && !isStaffRole(role)) {
       throw new ForbiddenException('You do not have permission to view checkpoints for this order');
     }
 
@@ -84,6 +101,47 @@ export class MilestonesService {
       where: { orderId },
       orderBy: { createdAt: 'asc' },
     });
+  }
+
+  /**
+   * Customer approves a target (milestone) DEFINITION set by the helper.
+   * This is the pre-payment agreement step: the customer confirms the plan/targets
+   * before funding escrow. It is distinct from reviewing submitted work later.
+   */
+  async approveTarget(customerUserId: string, checkpointId: string) {
+    const checkpoint = await this.prisma.projectCheckpoint.findUnique({
+      where: { id: checkpointId },
+      include: { order: true },
+    });
+
+    if (!checkpoint) {
+      throw new NotFoundException(`Checkpoint '${checkpointId}' not found`);
+    }
+
+    if (checkpoint.order.customerId !== customerUserId) {
+      throw new ForbiddenException('Only the client can approve targets for this order');
+    }
+
+    if (checkpoint.status !== CheckpointStatus.PENDING) {
+      throw new ConflictException(
+        `Target is in '${checkpoint.status}' status and cannot be approved (must be PENDING)`,
+      );
+    }
+
+    if (checkpoint.approvedAt) {
+      throw new ConflictException('This target has already been approved');
+    }
+
+    const updated = await this.prisma.projectCheckpoint.update({
+      where: { id: checkpointId },
+      data: {
+        approvedAt: new Date(),
+        status: CheckpointStatus.IN_PROGRESS,
+      },
+    });
+
+    this.logger.log(`Target ${checkpointId} approved by customer ${customerUserId}`);
+    return updated;
   }
 
   /**

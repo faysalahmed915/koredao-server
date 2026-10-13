@@ -19,6 +19,7 @@ describe('ChatService', () => {
       findMany: ReturnType<typeof vi.fn>;
       create: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
+      count: ReturnType<typeof vi.fn>;
     };
     chatMessage: {
       create: ReturnType<typeof vi.fn>;
@@ -44,6 +45,7 @@ describe('ChatService', () => {
         findMany: vi.fn(),
         create: vi.fn(),
         update: vi.fn(),
+        count: vi.fn(),
       },
       chatMessage: {
         create: vi.fn(),
@@ -278,6 +280,49 @@ describe('ChatService', () => {
       expect(prisma.chatMessage.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ hasSafetyWarning: true }),
+        }),
+      );
+    });
+  });
+
+  describe('getMessages (staff access)', () => {
+    it('should let a moderator read any conversation history', async () => {
+      prisma.conversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vend-1' },
+      });
+      prisma.chatMessage.findMany.mockResolvedValue([{ id: 'msg-1', content: 'hi' }]);
+
+      const res = await service.getMessages('staff-1', 'conv-1', 'MODERATOR');
+      expect(res).toEqual([{ id: 'msg-1', content: 'hi' }]);
+    });
+
+    it('should forbid a non-participant, non-staff user from reading history', async () => {
+      prisma.conversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vend-1' },
+      });
+
+      await expect(
+        service.getMessages('stranger', 'conv-1', 'CUSTOMER'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('getConversationsForStaff', () => {
+    it('should return paginated conversations and filter flagged-only when requested', async () => {
+      prisma.conversation.findMany.mockResolvedValue([{ id: 'conv-1' }]);
+      prisma.conversation.count.mockResolvedValue(1);
+
+      const res = await service.getConversationsForStaff({ flaggedOnly: true, page: 1, limit: 10 });
+
+      expect(res.total).toBe(1);
+      expect(res.items).toEqual([{ id: 'conv-1' }]);
+      expect(prisma.conversation.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { messages: { some: { hasSafetyWarning: true } } },
         }),
       );
     });

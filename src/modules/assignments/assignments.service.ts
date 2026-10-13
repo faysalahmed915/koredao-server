@@ -60,12 +60,24 @@ export class AssignmentsService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
+   * Business rules for job posting (students / customers only):
+   * - Max 5 job posts per rolling 7-day window.
+   * - Max 3 active (OPEN or ASSIGNED) job posts at any one time.
+   */
+  private static readonly WEEKLY_POST_LIMIT = 5;
+  private static readonly ACTIVE_POST_LIMIT = 3;
+  private static readonly WEEKLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+  /**
    * Creates a new assignment request / job post.
+   * Enforces the weekly (5) and concurrent active (3) posting limits for customers.
    */
   async create(customerId: string, dto: CreateAssignmentDto) {
     if (dto.budgetMin > dto.budgetMax) {
       throw new ConflictException('Minimum budget cannot exceed maximum budget');
     }
+
+    await this.enforcePostingLimits(customerId);
 
     const assignment = await this.prisma.assignment.create({
       data: {
@@ -89,6 +101,40 @@ export class AssignmentsService {
 
     this.logger.log(`Created Assignment '${assignment.title}' (id=${assignment.id}) by customerId=${customerId}`);
     return assignment;
+  }
+
+  /**
+   * Enforces the customer posting quota before a new job post is created.
+   */
+  private async enforcePostingLimits(customerId: string) {
+    const windowStart = new Date(Date.now() - AssignmentsService.WEEKLY_WINDOW_MS);
+
+    const [weeklyCount, activeCount] = await Promise.all([
+      this.prisma.assignment.count({
+        where: {
+          customerId,
+          createdAt: { gte: windowStart },
+        },
+      }),
+      this.prisma.assignment.count({
+        where: {
+          customerId,
+          status: { in: [AssignmentStatus.OPEN, AssignmentStatus.ASSIGNED] },
+        },
+      }),
+    ]);
+
+    if (weeklyCount >= AssignmentsService.WEEKLY_POST_LIMIT) {
+      throw new ConflictException(
+        `Weekly job posting limit reached (${AssignmentsService.WEEKLY_POST_LIMIT} per 7 days). Please wait before posting again.`,
+      );
+    }
+
+    if (activeCount >= AssignmentsService.ACTIVE_POST_LIMIT) {
+      throw new ConflictException(
+        `You already have ${AssignmentsService.ACTIVE_POST_LIMIT} active jobs with helpers. Complete or close one before posting another.`,
+      );
+    }
   }
 
   /**

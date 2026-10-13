@@ -202,6 +202,7 @@ export class OrdersService {
           platformFee,
           netVendorAmount,
           status: OrderStatus.PENDING_PAYMENT,
+          customerAcceptedAt: new Date(),
           deadline,
           maxRevisions: 2, // Standard 2 revisions for assignments
         },
@@ -229,17 +230,72 @@ export class OrdersService {
   }
 
   /**
-   * Confirms payment and locks funds in Escrow.
-   * Helper is notified and authorized to begin work.
+   * Vendor accepts a gig-order that a customer opened (the "customer clicks a gig,
+   * vendor accepts the job" handshake). This does NOT activate the job — it only
+   * records mutual agreement so both parties can set targets / materials in the
+   * target sidebar before payment.
    */
-  async fundEscrow(orderId: string, gateway: string = 'MOCK_SANDBOX', transactionRef?: string) {
+  async vendorAcceptOrder(vendorUserId: string, orderId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      include: { escrowHolding: true },
+      include: { vendorProfile: true },
     });
 
     if (!order) {
       throw new NotFoundException(`Order '${orderId}' not found`);
+    }
+
+    if (order.vendorProfile.userId !== vendorUserId) {
+      throw new ForbiddenException('Only the assigned helper can accept this order');
+    }
+
+    if (order.status !== OrderStatus.PENDING_PAYMENT) {
+      throw new ConflictException(
+        `Order cannot be accepted because it is already '${order.status}'`,
+      );
+    }
+
+    if (order.vendorAcceptedAt) {
+      throw new ConflictException('You have already accepted this order');
+    }
+
+    const updated = await this.prisma.order.update({
+      where: { id: orderId },
+      data: { vendorAcceptedAt: new Date() },
+    });
+
+    this.logger.log(`Vendor accepted orderId=${orderId} (orderNumber=${order.orderNumber})`);
+    return this.findById(updated.id, vendorUserId);
+  }
+
+  /**
+   * Confirms payment and locks funds in Escrow.
+   * Helper is notified and authorized to begin work.
+   *
+   * `actorUserId` is the authenticated caller initiating the escrow funding. When
+   * provided, the caller must be the order's customer or an admin/moderator; this
+   * prevents any signed-in user from arbitrarily funding another user's order.
+   * Payment gateway IPN callbacks pass no actor (system-level trust).
+   */
+  async fundEscrow(
+    orderId: string,
+    gateway: string = 'MOCK_SANDBOX',
+    transactionRef?: string,
+    actorUserId?: string,
+  ) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { escrowHolding: true, vendorProfile: { select: { userId: true } } },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order '${orderId}' not found`);
+    }
+
+    // Security: when an authenticated actor initiates funding (manual/sandbox path),
+    // they must be the order's customer. System callers (payment IPN) pass no actor.
+    if (actorUserId && order.customerId !== actorUserId) {
+      throw new ForbiddenException('You do not have permission to fund this order');
     }
 
     if (order.status !== OrderStatus.PENDING_PAYMENT) {
