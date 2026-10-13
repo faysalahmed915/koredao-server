@@ -209,14 +209,14 @@ export class ChatService {
       },
       orderBy: { lastMessageAt: 'desc' },
       include: {
-        customer: { select: { id: true, name: true, image: true, email: true } },
+        customer: { select: { id: true, name: true, image: true, email: true, lastSeenAt: true } },
         vendorProfile: {
           select: {
             id: true,
             userId: true,
             university: true,
             department: true,
-            user: { select: { id: true, name: true, image: true } },
+            user: { select: { id: true, name: true, image: true, lastSeenAt: true } },
           },
         },
         order: { select: { id: true, orderNumber: true, title: true, status: true } },
@@ -226,6 +226,67 @@ export class ChatService {
         },
       },
     });
+  }
+
+  /**
+   * Marks all incoming (not sent by the caller) messages in a conversation as read
+   * and broadcasts a `messages_read` event so the sender sees real-time read receipts.
+   * Returns the ids that were updated.
+   */
+  async markConversationRead(userId: string, conversationId: string) {
+    const conv = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      include: { vendorProfile: true },
+    });
+
+    if (!conv) {
+      throw new NotFoundException('Conversation not found');
+    }
+
+    const isCustomer = conv.customerId === userId;
+    const isVendor = conv.vendorProfile.userId === userId;
+
+    if (!isCustomer && !isVendor) {
+      throw new ForbiddenException('You do not have access to this conversation');
+    }
+
+    const unread = await this.prisma.chatMessage.findMany({
+      where: { conversationId, senderId: { not: userId }, isRead: false },
+      select: { id: true },
+    });
+
+    if (unread.length === 0) {
+      return { updatedCount: 0, messageIds: [] as string[] };
+    }
+
+    const ids = unread.map((m) => m.id);
+    await this.prisma.chatMessage.updateMany({
+      where: { id: { in: ids } },
+      data: { isRead: true },
+    });
+
+    // Notify the room (sender) that these messages are now read.
+    if (this.socketServer) {
+      this.socketServer
+        .to(`conversation_${conversationId}`)
+        .emit('messages_read', { conversationId, messageIds: ids, readBy: userId });
+    }
+
+    this.logger.log(`Marked ${ids.length} message(s) read in conversation=${conversationId} by user=${userId}`);
+    return { updatedCount: ids.length, messageIds: ids };
+  }
+
+  /**
+   * Persists the caller's presence heartbeat (last-seen timestamp). Used by the
+   * WebSocket gateway on connect/disconnect and can also be called periodically.
+   */
+  async updatePresence(userId: string) {
+    const now = new Date();
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { lastSeenAt: now },
+    });
+    return { userId, lastSeenAt: now };
   }
 
   /**

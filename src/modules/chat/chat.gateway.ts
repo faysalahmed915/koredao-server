@@ -6,6 +6,7 @@ import {
   ConnectedSocket,
   OnGatewayInit,
   OnGatewayConnection,
+  OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Server, Socket } from 'socket.io';
@@ -23,16 +24,51 @@ import { ChatService } from './chat.service.js';
   },
   namespace: '/chat',
 })
-export class ChatGateway implements OnGatewayInit, OnGatewayConnection {
+export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;
 
   private readonly logger = new Logger(ChatGateway.name);
 
+  // userId -> Set of socket ids, for presence broadcast.
+  private readonly onlineUsers = new Map<string, Set<string>>();
+
   constructor(private readonly chatService: ChatService) {}
 
   handleConnection(client: Socket): void {
-    this.logger.log(`WS client connected: ${client.id} (ns=/chat)`);
+    // The client passes its authenticated userId in the handshake query. We trust
+    // it here only for presence (last-seen) bookkeeping; all data access is still
+    // authorized at the REST/service layer. Presence is best-effort.
+    const userId = (client.handshake.query?.userId as string) || undefined;
+    if (userId) {
+      (client.data as { userId?: string }).userId = userId;
+      const set = this.onlineUsers.get(userId) ?? new Set<string>();
+      set.add(client.id);
+      this.onlineUsers.set(userId, set);
+      // Best-effort presence heartbeat; ignore failures.
+      void this.chatService.updatePresence(userId).catch(() => undefined);
+      this.server.emit('presence', { userId, online: true });
+    }
+    this.logger.log(`WS client connected: ${client.id}${userId ? ` (user=${userId})` : ''} (ns=/chat)`);
+  }
+
+  handleDisconnect(client: Socket): void {
+    const userId = (client.data as { userId?: string } | undefined)?.userId;
+    if (userId) {
+      const set = this.onlineUsers.get(userId);
+      if (set) {
+        set.delete(client.id);
+        if (set.size === 0) {
+          this.onlineUsers.delete(userId);
+          // Stamp last-seen and broadcast offline presence.
+          void this.chatService.updatePresence(userId).catch(() => undefined);
+          this.server.emit('presence', { userId, online: false, lastSeenAt: new Date().toISOString() });
+        } else {
+          this.onlineUsers.set(userId, set);
+        }
+      }
+    }
+    this.logger.log(`WS client disconnected: ${client.id}`);
   }
 
   /**
@@ -66,6 +102,20 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection {
     if (!data?.conversationId) return;
     const room = `conversation_${data.conversationId}`;
     client.to(room).emit('user_typing', data);
+  }
+
+  @SubscribeMessage('mark_read')
+  async handleMarkRead(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { userId: string; conversationId: string },
+  ) {
+    if (!data?.userId || !data?.conversationId) return;
+    try {
+      // markConversationRead persists isRead and broadcasts 'messages_read' to the room.
+      await this.chatService.markConversationRead(data.userId, data.conversationId);
+    } catch (err: any) {
+      this.logger.warn(`WS mark_read failed: ${err?.message}`);
+    }
   }
 
   @SubscribeMessage('send_message')
