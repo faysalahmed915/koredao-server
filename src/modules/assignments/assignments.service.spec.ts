@@ -35,7 +35,7 @@ describe('AssignmentsService', () => {
         findUnique: vi.fn(),
         findMany: vi.fn(),
         update: vi.fn(),
-        count: vi.fn(),
+        count: vi.fn().mockResolvedValue(0),
       },
       bid: {
         create: vi.fn(),
@@ -100,6 +100,52 @@ describe('AssignmentsService', () => {
           budgetMax: 500,
         }),
       ).rejects.toThrow(ConflictException);
+    });
+
+    it('should throw ConflictException when the weekly posting limit (5) is reached', async () => {
+      prisma.assignment.count.mockImplementation((args: any) => {
+        // weekly window count (createdAt filter) returns 5; active count returns 0
+        if (args?.where?.createdAt) return Promise.resolve(5);
+        return Promise.resolve(0);
+      });
+
+      await expect(
+        service.create('cust-1', {
+          title: 'Physics Lab',
+          description: 'Young modulus error calculations',
+          category: GigCategory.LAB_REPORT,
+          subject: 'Physics',
+          type: AssignmentType.SOFTCOPY,
+          deadline: '2026-10-20T00:00:00.000Z',
+          budgetMin: 500,
+          budgetMax: 1000,
+        }),
+      ).rejects.toThrow(/Weekly job posting limit/i);
+
+      expect(prisma.assignment.create).not.toHaveBeenCalled();
+    });
+
+    it('should throw ConflictException when 3 active jobs already exist', async () => {
+      prisma.assignment.count.mockImplementation((args: any) => {
+        if (args?.where?.createdAt) return Promise.resolve(1);
+        // active status count returns 3
+        return Promise.resolve(3);
+      });
+
+      await expect(
+        service.create('cust-1', {
+          title: 'Physics Lab',
+          description: 'Young modulus error calculations',
+          category: GigCategory.LAB_REPORT,
+          subject: 'Physics',
+          type: AssignmentType.SOFTCOPY,
+          deadline: '2026-10-20T00:00:00.000Z',
+          budgetMin: 500,
+          budgetMax: 1000,
+        }),
+      ).rejects.toThrow(/active jobs with helpers/i);
+
+      expect(prisma.assignment.create).not.toHaveBeenCalled();
     });
   });
 

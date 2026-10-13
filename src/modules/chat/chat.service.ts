@@ -9,6 +9,17 @@ import type { Server } from 'socket.io';
 import { PrismaService } from '../../core/database/prisma.service.js';
 import { CreateOrGetConversationDto } from './dto/create-or-get-conversation.dto.js';
 import { SendMessageDto } from './dto/send-message.dto.js';
+import { UserRole } from '@prisma/client';
+
+/** Roles permitted to audit any conversation (read-only moderation). */
+const STAFF_ROLES: UserRole[] = [
+  UserRole.SUPER_ADMIN,
+  UserRole.ADMIN,
+  UserRole.MODERATOR,
+];
+
+const isStaffRole = (role?: UserRole | string): boolean =>
+  !!role && STAFF_ROLES.includes(role as UserRole);
 
 export function checkSafetyLeakage(content: string): { hasWarning: boolean; note?: string } {
   const phoneRegex = /(?:\+?88)?01[3-9]\d{8}|\b\d{3}[-.\s]??\d{3}[-.\s]??\d{4}\b/;
@@ -218,9 +229,65 @@ export class ChatService {
   }
 
   /**
-   * Retrieves messages for a conversation with pagination
+   * Moderation view: lists all conversations across the platform for staff auditing.
+   * Supports filtering to only conversations flagged with a safety warning (zero-leakage
+   * alerts) and simple pagination. Never returns message bodies here — staff open a
+   * specific conversation via `getMessages`.
    */
-  async getMessages(userId: string, conversationId: string) {
+  async getConversationsForStaff(options: {
+    flaggedOnly?: boolean;
+    page?: number;
+    limit?: number;
+  } = {}) {
+    const page = Math.max(1, options.page || 1);
+    const limit = Math.min(100, Math.max(1, options.limit || 20));
+    const skip = (page - 1) * limit;
+
+    const where: any = options.flaggedOnly
+      ? { messages: { some: { hasSafetyWarning: true } } }
+      : {};
+
+    const [items, total] = await Promise.all([
+      this.prisma.conversation.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { lastMessageAt: 'desc' },
+        include: {
+          customer: { select: { id: true, name: true, image: true, email: true } },
+          vendorProfile: {
+            select: {
+              id: true,
+              userId: true,
+              university: true,
+              department: true,
+              user: { select: { id: true, name: true, image: true } },
+            },
+          },
+          order: { select: { id: true, orderNumber: true, title: true, status: true } },
+          _count: {
+            select: {
+              messages: { where: { hasSafetyWarning: true } },
+            },
+          },
+          messages: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+        },
+      }),
+      this.prisma.conversation.count({ where }),
+    ]);
+
+    return { items, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  /**
+   * Retrieves messages for a conversation.
+   * Participants (customer/helper) plus moderation staff (MODERATOR/ADMIN/SUPER_ADMIN)
+   * may read the history for safety review and dispute arbitration.
+   */
+  async getMessages(userId: string, conversationId: string, role?: UserRole | string) {
     const conv = await this.prisma.conversation.findUnique({
       where: { id: conversationId },
       include: { vendorProfile: true },
@@ -233,7 +300,7 @@ export class ChatService {
     const isCustomer = conv.customerId === userId;
     const isVendor = conv.vendorProfile.userId === userId;
 
-    if (!isCustomer && !isVendor) {
+    if (!isCustomer && !isVendor && !isStaffRole(role)) {
       throw new ForbiddenException('You do not have access to this conversation');
     }
 
