@@ -9,6 +9,7 @@ describe('AuthController', () => {
     login: ReturnType<typeof vi.fn>;
     logout: ReturnType<typeof vi.fn>;
     getSession: ReturnType<typeof vi.fn>;
+    signInSocial: ReturnType<typeof vi.fn>;
   };
 
   const mockResponse = () => {
