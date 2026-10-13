@@ -24,9 +24,13 @@ describe('ChatService', () => {
     chatMessage: {
       create: ReturnType<typeof vi.fn>;
       findMany: ReturnType<typeof vi.fn>;
+      updateMany: ReturnType<typeof vi.fn>;
     };
     projectCheckpoint: {
       findUnique: ReturnType<typeof vi.fn>;
+    };
+    user: {
+      update: ReturnType<typeof vi.fn>;
     };
     $transaction: ReturnType<typeof vi.fn>;
   };
@@ -50,9 +54,13 @@ describe('ChatService', () => {
       chatMessage: {
         create: vi.fn(),
         findMany: vi.fn(),
+        updateMany: vi.fn(),
       },
       projectCheckpoint: {
         findUnique: vi.fn(),
+      },
+      user: {
+        update: vi.fn(),
       },
       $transaction: vi.fn().mockImplementation((arr) => Promise.all(arr)),
     };
@@ -325,6 +333,65 @@ describe('ChatService', () => {
           where: { messages: { some: { hasSafetyWarning: true } } },
         }),
       );
+    });
+  });
+  describe('markConversationRead', () => {
+    it('marks unread incoming messages as read and returns their ids', async () => {
+      prisma.conversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vend-1' },
+      });
+      prisma.chatMessage.findMany.mockResolvedValue([{ id: 'msg-1' }, { id: 'msg-2' }]);
+      prisma.chatMessage.updateMany.mockResolvedValue({ count: 2 });
+
+      const res = await service.markConversationRead('cust-1', 'conv-1');
+
+      expect(res.updatedCount).toBe(2);
+      expect(res.messageIds).toEqual(['msg-1', 'msg-2']);
+      expect(prisma.chatMessage.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['msg-1', 'msg-2'] } },
+        data: { isRead: true },
+      });
+    });
+
+    it('returns zero when there are no unread incoming messages', async () => {
+      prisma.conversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vend-1' },
+      });
+      prisma.chatMessage.findMany.mockResolvedValue([]);
+
+      const res = await service.markConversationRead('cust-1', 'conv-1');
+      expect(res.updatedCount).toBe(0);
+      expect(prisma.chatMessage.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('forbids a non-participant from marking a conversation read', async () => {
+      prisma.conversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vend-1' },
+      });
+
+      await expect(service.markConversationRead('stranger', 'conv-1')).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+  });
+
+  describe('updatePresence', () => {
+    it('updates the user lastSeenAt timestamp', async () => {
+      prisma.user.update.mockResolvedValue({ id: 'usr-1', lastSeenAt: new Date() });
+
+      const res = await service.updatePresence('usr-1');
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'usr-1' },
+        data: { lastSeenAt: expect.any(Date) },
+      });
+      expect(res.userId).toBe('usr-1');
     });
   });
 });

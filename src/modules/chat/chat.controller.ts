@@ -94,6 +94,35 @@ export class ChatController {
     });
   }
 
+  @Post('conversations/:id/read')
+  @HttpCode(HttpStatus.OK)
+  @ApiCookieAuth('better-auth.session_token')
+  @ApiOperation({
+    summary: 'Mark all incoming messages in a conversation as read (read receipts)',
+    description:
+      'Marks every unread message not sent by the caller as read and broadcasts a real-time read-receipt event to the room.',
+  })
+  @ApiParam({ name: 'id', description: 'Conversation CUID' })
+  @ApiResponse({ status: 200, description: 'Messages marked as read.' })
+  @ApiResponse({ status: 403, description: 'Forbidden: not a participant.' })
+  markConversationRead(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.chatService.markConversationRead(user.id, id);
+  }
+
+  @Post('presence')
+  @HttpCode(HttpStatus.OK)
+  @ApiCookieAuth('better-auth.session_token')
+  @ApiOperation({
+    summary: 'Update the caller presence heartbeat (last-seen timestamp)',
+  })
+  @ApiResponse({ status: 200, description: 'Presence updated.' })
+  updatePresence(@CurrentUser() user: AuthenticatedUser) {
+    return this.chatService.updatePresence(user.id);
+  }
+
   @Post('messages')
   @HttpCode(HttpStatus.CREATED)
   @ApiCookieAuth('better-auth.session_token')
