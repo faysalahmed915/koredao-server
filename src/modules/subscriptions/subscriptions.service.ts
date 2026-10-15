@@ -10,6 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import { PrismaService } from '../../core/database/prisma.service.js';
+import { randomUUID } from 'node:crypto';
 import { SubscriptionPlan, SubscriptionStatus } from '@prisma/client';
 import {
   MEMBERSHIP_PLANS,
@@ -41,14 +42,53 @@ export interface CheckoutResult {
   gateway: SubscriptionGateway;
   /** Hosted gateway URL the browser should be sent to. `null` in sandbox mode. */
   paymentUrl: string | null;
-  /** Gateway-assigned merchant transaction reference, when the gateway returned one. */
+  /**
+   * Our merchant transaction reference. This is the value the payment is bound
+   * to and verified against — it is generated server-side and never accepted
+   * from the client.
+   */
   transactionRef: string | null;
   sandbox: boolean;
-  expiresAt: Date;
+  /**
+   * When the period *would* end if the membership were confirmed immediately.
+   * The clock actually starts at confirmation, so treat this as an estimate.
+   */
+  expectedExpiresAt: Date;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MEMBERSHIP_CACHE_TTL_MS = 15_000;
+/** How long an unpaid checkout may block starting a new one. */
+const PENDING_CHECKOUT_TTL_MS = 60 * 60 * 1000;
+/** Upper bound on the membership cache so it can never grow without limit. */
+const MEMBERSHIP_CACHE_MAX_ENTRIES = 5_000;
+
+/** Reads a string-ish field from an untrusted gateway response. */
+function asString(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/** Reads a numeric field from an untrusted gateway response. */
+function asNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+/** Compares a gateway-reported major-unit amount to our integer poisha amount. */
+function amountMatches(reported: number | null, poisha: number): boolean {
+  if (reported === null) return false;
+  return Math.abs(reported - poisha / 100) < 0.01;
+}
+
+/** Prisma's code for a transaction serialization failure / write conflict. */
+function isSerializationFailure(err: unknown): boolean {
+  const code = (err as { code?: string })?.code;
+  return code === 'P2034' || code === 'P2002';
+}
 
 @Injectable()
 export class SubscriptionsService {
@@ -58,9 +98,10 @@ export class SubscriptionsService {
    * Short-lived cache of "is this user currently a member".
    *
    * The authorization guard runs on every non-public request, so hitting
-   * PostgreSQL each time would add a query to the whole API. A 15 second TTL
-   * keeps revocation prompt (an admin cancelling a subscription is effective
-   * almost immediately) while removing the per-request read.
+   * PostgreSQL each time would add a query to the whole API. The TTL keeps
+   * revocation prompt while removing the per-request read, and is additionally
+   * clamped to the membership's own expiry so a cached ALLOW can never outlive
+   * the subscription it was derived from.
    */
   private readonly membershipCache = new Map<
     string,
@@ -97,6 +138,7 @@ export class SubscriptionsService {
     }
 
     let isMember = false;
+    let membershipExpiresAtMs: number | null = null;
     try {
       const active = await this.prisma.subscription.findFirst({
         where: {
@@ -104,9 +146,11 @@ export class SubscriptionsService {
           status: SubscriptionStatus.ACTIVE,
           expiresAt: { gt: new Date() },
         },
-        select: { id: true },
+        select: { id: true, expiresAt: true },
+        orderBy: { expiresAt: 'desc' },
       });
       isMember = active !== null;
+      membershipExpiresAtMs = active?.expiresAt?.getTime() ?? null;
     } catch (err) {
       // Fail closed: an unreachable database must never be read as "is a member".
       this.logger.error(
@@ -115,12 +159,34 @@ export class SubscriptionsService {
       isMember = false;
     }
 
-    this.membershipCache.set(userId, {
-      isMember,
-      expiresAt: Date.now() + MEMBERSHIP_CACHE_TTL_MS,
-    });
+    // Never let a cached ALLOW outlive the membership it was derived from.
+    const ttlExpiry = Date.now() + MEMBERSHIP_CACHE_TTL_MS;
+    const expiresAt =
+      isMember && membershipExpiresAtMs !== null
+        ? Math.min(ttlExpiry, membershipExpiresAtMs)
+        : ttlExpiry;
+
+    this.pruneMembershipCache();
+    this.membershipCache.set(userId, { isMember, expiresAt });
 
     return isMember;
+  }
+
+  /** Drops expired entries, and the oldest entries if the map still exceeds its cap. */
+  private pruneMembershipCache(): void {
+    if (this.membershipCache.size < MEMBERSHIP_CACHE_MAX_ENTRIES) return;
+
+    const now = Date.now();
+    for (const [key, value] of this.membershipCache) {
+      if (value.expiresAt <= now) this.membershipCache.delete(key);
+    }
+
+    // Map iterates in insertion order, so the first keys are the oldest.
+    while (this.membershipCache.size >= MEMBERSHIP_CACHE_MAX_ENTRIES) {
+      const oldest = this.membershipCache.keys().next();
+      if (oldest.done) break;
+      this.membershipCache.delete(oldest.value);
+    }
   }
 
   /** Drops any cached membership verdict for a user (call after activation/cancel). */
@@ -135,10 +201,25 @@ export class SubscriptionsService {
   async getMyMembership(userId: string): Promise<MembershipSummary> {
     await this.expireOverdue(userId);
 
-    const subscription = await this.prisma.subscription.findFirst({
+    // Explicitly prefer a live membership over relying on the alphabetical
+    // ordering of the status enum, and only fall back to the newest historic
+    // row so the UI can still show an expired/cancelled plan.
+    const subscriptions = await this.prisma.subscription.findMany({
       where: { userId },
-      orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+      orderBy: { createdAt: 'desc' },
+      take: 10,
     });
+
+    const now = Date.now();
+    const subscription =
+      subscriptions.find(
+        (s) =>
+          s.status === SubscriptionStatus.ACTIVE &&
+          s.expiresAt !== null &&
+          s.expiresAt.getTime() > now,
+      ) ??
+      subscriptions[0] ??
+      null;
 
     if (!subscription) {
       return {
@@ -235,6 +316,34 @@ export class SubscriptionsService {
       );
     }
 
+    // At most one in-flight checkout per user. Without this a caller can mint
+    // unlimited PENDING rows and confirm several of them, which bills them more
+    // than once and makes the "which membership is live?" question ambiguous.
+    const pending = await this.prisma.subscription.findFirst({
+      where: { userId, status: SubscriptionStatus.PENDING },
+      select: { id: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (pending) {
+      const ageMs = Date.now() - pending.createdAt.getTime();
+      if (ageMs < PENDING_CHECKOUT_TTL_MS) {
+        throw new ConflictException(
+          'A checkout is already in progress for this account. Complete or abandon it before starting another.',
+        );
+      }
+      // Abandoned checkout (tab closed, gateway never returned) — release it.
+      await this.prisma.subscription.update({
+        where: { id: pending.id },
+        data: { status: SubscriptionStatus.CANCELLED, cancelledAt: new Date() },
+      });
+    }
+
+    // Our merchant reference is minted up front and is the key the payment is
+    // later verified against. It is never client-supplied and never
+    // overwritten, so a caller cannot re-point a payment at another plan.
+    const merchantReference = `KD_MEM_${randomUUID()}`;
+
     const subscription = await this.prisma.subscription.create({
       data: {
         userId,
@@ -243,6 +352,7 @@ export class SubscriptionsService {
         amount: definition.price,
         currency: definition.currency,
         paymentGateway: gateway,
+        merchantReference,
       },
     });
 
@@ -256,36 +366,44 @@ export class SubscriptionsService {
         durationDays: definition.durationDays,
         gateway,
         paymentUrl: null,
-        transactionRef: null,
+        transactionRef: merchantReference,
         sandbox: true,
-        expiresAt: new Date(Date.now() + definition.durationDays * DAY_MS),
+        // The period only starts when the membership is confirmed.
+        expectedExpiresAt: new Date(Date.now() + definition.durationDays * DAY_MS),
       };
     }
 
-    const initiation = await this.initiateGatewayCheckout(
-      gateway,
-      subscription.id,
-      definition,
-    );
+    try {
+      const initiation = await this.initiateGatewayCheckout(
+        gateway,
+        merchantReference,
+        definition,
+      );
 
-    await this.prisma.subscription.update({
-      where: { id: subscription.id },
-      data: { paymentReference: initiation.transactionRef },
-    });
-
-    return {
-      subscriptionId: subscription.id,
-      plan: definition.plan,
-      planName: definition.name,
-      amount: definition.price,
-      currency: definition.currency,
-      durationDays: definition.durationDays,
-      gateway,
-      paymentUrl: initiation.paymentUrl,
-      transactionRef: initiation.transactionRef,
-      sandbox: false,
-      expiresAt: new Date(Date.now() + definition.durationDays * DAY_MS),
-    };
+      return {
+        subscriptionId: subscription.id,
+        plan: definition.plan,
+        planName: definition.name,
+        amount: definition.price,
+        currency: definition.currency,
+        durationDays: definition.durationDays,
+        gateway,
+        paymentUrl: initiation.paymentUrl,
+        transactionRef: merchantReference,
+        sandbox: false,
+        expectedExpiresAt: new Date(Date.now() + definition.durationDays * DAY_MS),
+      };
+    } catch (err) {
+      // Gateway initiation failed — release the PENDING row so the user is not
+      // locked out of retrying by the "checkout already in progress" guard.
+      await this.prisma.subscription
+        .update({
+          where: { id: subscription.id },
+          data: { status: SubscriptionStatus.CANCELLED, cancelledAt: new Date() },
+        })
+        .catch(() => undefined);
+      throw err;
+    }
   }
 
   /**
@@ -330,39 +448,129 @@ export class SubscriptionsService {
     const gateway = (subscription.paymentGateway ?? 'sandbox') as SubscriptionGateway;
     this.assertGatewayAllowed(gateway);
 
-    const verified = await this.verifyWithGateway(gateway, subscription, dto.reference);
+    // The payment is always verified against the server-stored merchant
+    // reference; a client-supplied reference is deliberately ignored so a cheap
+    // payment cannot be replayed against an expensive plan.
+    const verified = await this.verifyWithGateway(gateway, subscription);
     if (!verified.success) {
       throw new ConflictException(
         verified.reason || 'Payment could not be verified with the gateway',
       );
     }
 
-    const startedAt = new Date();
-    const expiresAt = new Date(startedAt.getTime() + definition.durationDays * DAY_MS);
+    const activated = await this.activate(
+      subscription,
+      definition,
+      verified.gatewayReference,
+    );
 
-    const activated = await this.prisma.subscription.updateMany({
-      // Guarded update keeps this idempotent under concurrent callbacks.
-      where: { id: subscription.id, status: SubscriptionStatus.PENDING },
-      data: {
-        status: SubscriptionStatus.ACTIVE,
-        startedAt,
-        expiresAt,
-        ...(verified.reference ? { paymentReference: verified.reference } : {}),
-      },
-    });
-
-    if (activated.count === 0) {
+    if (!activated) {
       this.logger.warn(
         `Subscription ${subscription.id} was already confirmed by a concurrent request`,
       );
     } else {
       this.logger.log(
-        `Membership activated for user ${userId} (${definition.plan}) until ${expiresAt.toISOString()}`,
+        `Membership activated for user ${userId} (${definition.plan})`,
       );
     }
 
     this.invalidateMembership(userId);
     return this.getMyMembership(userId);
+  }
+
+  /**
+   * Activates a PENDING subscription while preserving the platform invariant
+   * that a user holds **at most one ACTIVE membership**.
+   *
+   * Runs at `Serializable` so two concurrent confirmations cannot both observe
+   * "no other live membership" and commit; Postgres aborts one of them
+   * (`P2034`), which we treat as "already activated". Any pre-existing live
+   * membership is superseded and its unused time carried over, so a duplicate
+   * purchase is never silently confiscated.
+   *
+   * @returns `true` when this call performed the activation, `false` when a
+   *          concurrent request already did (or the row was no longer PENDING).
+   */
+  private async activate(
+    subscription: { id: string; userId: string },
+    definition: MembershipPlanDefinition,
+    gatewayReference?: string,
+  ): Promise<boolean> {
+    try {
+      const result = await this.prisma.$transaction(
+        async (tx) => {
+          // Re-check inside the transaction: the caller's earlier read is stale.
+          const current = await tx.subscription.findUnique({
+            where: { id: subscription.id },
+            select: { status: true },
+          });
+          if (current?.status !== SubscriptionStatus.PENDING) {
+            return { count: 0 };
+          }
+
+          const now = Date.now();
+          const superseded = await tx.subscription.findMany({
+            where: {
+              userId: subscription.userId,
+              id: { not: subscription.id },
+              status: SubscriptionStatus.ACTIVE,
+              expiresAt: { gt: new Date(now) },
+            },
+            select: { id: true, expiresAt: true },
+            orderBy: { expiresAt: 'desc' },
+          });
+
+          // Carry over any remaining paid time so nothing the user paid for is lost.
+          const carryOverFrom = superseded[0]?.expiresAt;
+          const startsAtMs =
+            carryOverFrom && carryOverFrom.getTime() > now
+              ? carryOverFrom.getTime()
+              : now;
+
+          if (superseded.length > 0) {
+            this.logger.warn(
+              `Superseding ${superseded.length} live membership(s) for user ${subscription.userId} on activation of ${subscription.id}`,
+            );
+            await tx.subscription.updateMany({
+              where: { id: { in: superseded.map((s) => s.id) } },
+              data: {
+                status: SubscriptionStatus.EXPIRED,
+                autoRenew: false,
+                cancelledAt: new Date(),
+              },
+            });
+          }
+
+          return tx.subscription.updateMany({
+            where: { id: subscription.id, status: SubscriptionStatus.PENDING },
+            data: {
+              status: SubscriptionStatus.ACTIVE,
+              startedAt: new Date(startsAtMs),
+              expiresAt: new Date(startsAtMs + definition.durationDays * DAY_MS),
+              // Our merchant reference stays intact; the gateway's own id is
+              // recorded separately for the ledger and support.
+              ...(gatewayReference ? { paymentReference: gatewayReference } : {}),
+            },
+          });
+        },
+        { isolationLevel: 'Serializable' },
+      );
+
+      if (result.count > 0 && subscription.userId) {
+        this.invalidateMembership(subscription.userId);
+      }
+
+      return result.count > 0;
+    } catch (err) {
+      // A serialization failure means a concurrent confirmation won the race.
+      if (isSerializationFailure(err)) {
+        this.logger.warn(
+          `Concurrent activation detected for subscription ${subscription.id}; treating as already activated`,
+        );
+        return false;
+      }
+      throw err;
+    }
   }
 
   /**
@@ -375,17 +583,17 @@ export class SubscriptionsService {
    */
   async handleGatewayCallback(
     gateway: SubscriptionGateway,
-    subscriptionId: string,
-    reference?: string,
+    merchantReference: string,
   ): Promise<{ activated: boolean; returnUrl: string; reason?: string }> {
-    const returnUrl = this.config.get<string>(
-      'payment.returnUrl',
+    const membershipReturnUrl = this.config.get<string>(
+      'payment.membershipReturnUrl',
       'http://localhost:3001/membership',
     );
-    const membershipReturnUrl = returnUrl.replace(/\/orders.*$/, '/membership');
 
+    // Looked up by OUR merchant reference, which is what the gateway was given
+    // and what the payment is bound to.
     const subscription = await this.prisma.subscription.findUnique({
-      where: { id: subscriptionId },
+      where: { merchantReference },
     });
 
     if (!subscription || subscription.paymentGateway !== gateway) {
@@ -405,7 +613,7 @@ export class SubscriptionsService {
       return { activated: false, returnUrl: membershipReturnUrl, reason: 'unknown_plan' };
     }
 
-    const verified = await this.verifyWithGateway(gateway, subscription, reference);
+    const verified = await this.verifyWithGateway(gateway, subscription);
     if (!verified.success) {
       return {
         activated: false,
@@ -414,20 +622,18 @@ export class SubscriptionsService {
       };
     }
 
-    const startedAt = new Date();
-    const expiresAt = new Date(startedAt.getTime() + definition.durationDays * DAY_MS);
+    const activated = await this.activate(subscription, definition, verified.gatewayReference);
 
-    await this.prisma.subscription.updateMany({
-      where: { id: subscription.id, status: SubscriptionStatus.PENDING },
-      data: {
-        status: SubscriptionStatus.ACTIVE,
-        startedAt,
-        expiresAt,
-        ...(verified.reference ? { paymentReference: verified.reference } : {}),
-      },
-    });
+    if (!activated) {
+      this.logger.warn(
+        `Subscription ${subscription.id} was already activated by a concurrent callback`,
+      );
+      return { activated: true, returnUrl: membershipReturnUrl };
+    }
 
-    this.invalidateMembership(subscription.userId);
+    this.logger.log(
+      `Membership activated via ${gateway} callback for user ${subscription.userId} (${definition.plan})`,
+    );
     return { activated: true, returnUrl: membershipReturnUrl };
   }
 
@@ -459,14 +665,18 @@ export class SubscriptionsService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Sandbox checkout exists purely for local development. It is refused outright
-   * in production so a misconfigured deployment can never hand out free memberships.
+   * Sandbox checkout exists purely for local development.
+   *
+   * **Default deny**: it is enabled only for an explicit development/test
+   * environment, or when an operator deliberately opts in. Previously anything
+   * that was not literally `NODE_ENV=production` (staging, demo, a host that
+   * forgot to set NODE_ENV) would hand out free memberships.
    */
   private isSandboxEnabled(): boolean {
-    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_MEMBERSHIP_SANDBOX !== 'true') {
-      return false;
-    }
-    return true;
+    if (process.env.ALLOW_MEMBERSHIP_SANDBOX === 'true') return true;
+
+    const env = process.env.NODE_ENV;
+    return env === 'development' || env === 'test';
   }
 
   private assertGatewayAllowed(gateway: SubscriptionGateway): void {
@@ -479,10 +689,9 @@ export class SubscriptionsService {
 
   private async initiateGatewayCheckout(
     gateway: Exclude<SubscriptionGateway, 'sandbox'>,
-    subscriptionId: string,
+    merchantReference: string,
     definition: MembershipPlanDefinition,
-  ): Promise<{ paymentUrl: string; transactionRef: string }> {
-    const transactionRef = `KD_MEM_${subscriptionId}_${Date.now().toString(36)}`;
+  ): Promise<{ paymentUrl: string }> {
     const serverBaseUrl =
       process.env.APP_URL ||
       `http://localhost:${this.config.get<number>('app.port', 3000)}`;
@@ -496,7 +705,7 @@ export class SubscriptionsService {
           'payment.aamarpay.signatureKey',
           '',
         ),
-        tran_id: transactionRef,
+        tran_id: merchantReference,
         amount: (definition.price / 100).toFixed(2),
         currency: definition.currency,
         desc: `KoreDao ${definition.name}`,
@@ -506,11 +715,11 @@ export class SubscriptionsService {
         cus_add1: 'Dhaka',
         cus_city: 'Dhaka',
         cus_country: 'Bangladesh',
-        success_url: `${callbackUrl}?subscriptionId=${subscriptionId}`,
-        fail_url: `${callbackUrl}?subscriptionId=${subscriptionId}`,
-        cancel_url: `${callbackUrl}?subscriptionId=${subscriptionId}`,
+        success_url: `${callbackUrl}?subscriptionId=${merchantReference}`,
+        fail_url: `${callbackUrl}?subscriptionId=${merchantReference}`,
+        cancel_url: `${callbackUrl}?subscriptionId=${merchantReference}`,
         type: 'json',
-        opt_a: subscriptionId,
+        opt_a: merchantReference,
       };
 
       const res = await this.postJson(
@@ -518,13 +727,13 @@ export class SubscriptionsService {
         payload,
       );
 
-      const paymentUrl = res?.payment_url as string | undefined;
+      const paymentUrl = asString(res?.payment_url);
       if (!paymentUrl) {
         throw new ServiceUnavailableException(
           'Aamarpay checkout could not be started. Please try again or use another gateway.',
         );
       }
-      return { paymentUrl, transactionRef };
+      return { paymentUrl };
     }
 
     // PipraPay
@@ -532,12 +741,12 @@ export class SubscriptionsService {
       merchant_id: this.config.get<string>('payment.piprapay.merchantId', ''),
       amount: definition.price / 100,
       currency: definition.currency,
-      order_id: transactionRef,
+      order_id: merchantReference,
       customer_name: 'KoreDao Member',
       customer_email: 'member@koredao.com',
       customer_phone: '01700000000',
-      callback_url: `${callbackUrl}?subscriptionId=${subscriptionId}`,
-      return_url: `${callbackUrl}?subscriptionId=${subscriptionId}`,
+      callback_url: `${callbackUrl}?subscriptionId=${merchantReference}`,
+      return_url: `${callbackUrl}?subscriptionId=${merchantReference}`,
     };
 
     const res = await this.postJson(
@@ -546,47 +755,77 @@ export class SubscriptionsService {
       { 'X-API-KEY': this.config.get<string>('payment.piprapay.apiKey', '') },
     );
 
-    const paymentUrl = (res?.payment_url || res?.redirect_url) as string | undefined;
+    const paymentUrl = asString(res?.payment_url) ?? asString(res?.redirect_url);
     if (!paymentUrl) {
       throw new ServiceUnavailableException(
         'PipraPay checkout could not be started. Please try again or use another gateway.',
       );
     }
-    return { paymentUrl, transactionRef };
+    return { paymentUrl };
   }
 
   /**
    * Server-to-server verification. Fails closed: any error, timeout or ambiguous
    * gateway response results in "not verified" and the membership is not granted.
+   *
+   * The lookup key is **always** our own `merchantReference` — never a
+   * client-supplied value — and the amount actually paid must match the plan the
+   * subscription was created for, so a cheap payment cannot be replayed against
+   * an expensive plan.
    */
   private async verifyWithGateway(
     gateway: SubscriptionGateway,
-    subscription: { id: string; paymentReference: string | null; amount: number },
-    clientReference?: string,
-  ): Promise<{ success: boolean; reference?: string; reason?: string }> {
+    subscription: {
+      id: string;
+      merchantReference: string | null;
+      amount: number;
+      currency: string;
+    },
+  ): Promise<{ success: boolean; gatewayReference?: string; reason?: string }> {
     if (gateway === 'sandbox') {
       if (!this.isSandboxEnabled()) {
         return { success: false, reason: 'Sandbox confirmation is disabled' };
       }
       return {
         success: true,
-        reference: clientReference || `SANDBOX_MEMBERSHIP_${subscription.id}`,
+        gatewayReference: `SANDBOX_MEMBERSHIP_${subscription.id}`,
+      };
+    }
+
+    // Every real gateway is verified against OUR merchant reference. A
+    // client-supplied reference is never trusted: it is the one value an
+    // attacker controls on this path.
+    const merchantReference = subscription.merchantReference;
+    if (!merchantReference) {
+      this.logger.error(
+        `Subscription ${subscription.id} has no merchant reference; cannot verify`,
+      );
+      return {
+        success: false,
+        reason: 'This checkout cannot be verified. Please contact support.',
       };
     }
 
     if (gateway === 'aamarpay') {
-      const requestId = clientReference || subscription.paymentReference;
-      if (!requestId) {
-        return { success: false, reason: 'Missing Aamarpay transaction reference' };
+      const rawVerifyUrl = this.config.get<string>(
+        'payment.aamarpay.verifyUrl',
+        '',
+      );
+      let verifyUrl: URL;
+      try {
+        verifyUrl = new URL(rawVerifyUrl);
+      } catch {
+        // A missing/malformed endpoint must fail closed, never throw a 500.
+        this.logger.error(
+          'Aamarpay verification endpoint is not configured correctly',
+        );
+        return {
+          success: false,
+          reason: 'Aamarpay verification is unavailable on this deployment',
+        };
       }
 
-      const verifyUrl = new URL(
-        this.config.get<string>('payment.aamarpay.verifyUrl', ''),
-      );
-      verifyUrl.searchParams.set(
-        'request_id',
-        requestId,
-      );
+      verifyUrl.searchParams.set('request_id', merchantReference);
       verifyUrl.searchParams.set(
         'store_id',
         this.config.get<string>('payment.aamarpay.storeId', ''),
@@ -603,11 +842,27 @@ export class SubscriptionsService {
           signal: AbortSignal.timeout(10_000),
         });
         const body = (await response.json()) as Record<string, unknown>;
-        const paid =
-          body?.pay_status === 'Successful' || body?.status_code === '2';
-        return paid
-          ? { success: true, reference: String(body?.pg_txnid ?? requestId) }
-          : { success: false, reason: 'Aamarpay reports the payment as unpaid' };
+
+        // `status_code` describes the *transaction-check request*, not whether
+        // the customer paid, so only `pay_status` may authorise a membership.
+        if (body?.pay_status !== 'Successful') {
+          return { success: false, reason: 'Aamarpay reports the payment as unpaid' };
+        }
+
+        if (!amountMatches(asNumber(body?.amount), subscription.amount)) {
+          this.logger.error(
+            `Aamarpay amount mismatch for ${merchantReference}: expected ${subscription.amount / 100} ${subscription.currency}, got ${String(body?.amount)}`,
+          );
+          return {
+            success: false,
+            reason: 'The paid amount does not match the selected plan',
+          };
+        }
+
+        return {
+          success: true,
+          gatewayReference: asString(body?.pg_txnid) ?? merchantReference,
+        };
       } catch (err) {
         this.logger.error(`Aamarpay verification failed: ${String(err)}`);
         return { success: false, reason: 'Could not reach the payment gateway' };
@@ -615,11 +870,6 @@ export class SubscriptionsService {
     }
 
     // PipraPay
-    const transactionId = clientReference || subscription.paymentReference;
-    if (!transactionId) {
-      return { success: false, reason: 'Missing PipraPay transaction reference' };
-    }
-
     try {
       const response = await fetch(
         this.config.get<string>('payment.piprapay.verifyUrl', ''),
@@ -631,30 +881,50 @@ export class SubscriptionsService {
           },
           body: JSON.stringify({
             merchant_id: this.config.get<string>('payment.piprapay.merchantId', ''),
-            transaction_id: transactionId,
+            order_id: merchantReference,
           }),
           signal: AbortSignal.timeout(10_000),
         },
       );
       const body = (await response.json()) as Record<string, unknown>;
+
       const paid =
         body?.status === 'COMPLETED' ||
         body?.status === 'SUCCESS' ||
         body?.payment_status === 'completed';
-      return paid
-        ? { success: true, reference: String(body?.pp_txnid ?? transactionId) }
-        : { success: false, reason: 'PipraPay reports the payment as unpaid' };
+      if (!paid) {
+        return { success: false, reason: 'PipraPay reports the payment as unpaid' };
+      }
+
+      if (!amountMatches(asNumber(body?.amount), subscription.amount)) {
+        this.logger.error(
+          `PipraPay amount mismatch for ${merchantReference}: expected ${subscription.amount / 100} ${subscription.currency}, got ${String(body?.amount)}`,
+        );
+        return {
+          success: false,
+          reason: 'The paid amount does not match the selected plan',
+        };
+      }
+
+      return {
+        success: true,
+        gatewayReference: asString(body?.pp_txnid) ?? merchantReference,
+      };
     } catch (err) {
       this.logger.error(`PipraPay verification failed: ${String(err)}`);
       return { success: false, reason: 'Could not reach the payment gateway' };
     }
   }
 
+  /**
+   * Gateway-response shape. Responses are untrusted, so every field is read
+   * defensively via {@link asString} rather than assumed.
+   */
   private async postJson(
     url: string,
     payload: Record<string, unknown>,
     extraHeaders: Record<string, string> = {},
-  ): Promise<Record<string, any> | null> {
+  ): Promise<Record<string, unknown> | null> {
     if (!url) return null;
     try {
       const response = await fetch(url, {
@@ -665,7 +935,10 @@ export class SubscriptionsService {
       });
       const text = await response.text();
       try {
-        return JSON.parse(text) as Record<string, any>;
+        const parsed: unknown = JSON.parse(text);
+        return parsed && typeof parsed === 'object'
+          ? (parsed as Record<string, unknown>)
+          : null;
       } catch {
         this.logger.warn(`Gateway returned a non-JSON body from ${url}`);
         return null;
@@ -704,7 +977,8 @@ export class SubscriptionsService {
         amount: 0,
         currency: definition.currency,
         paymentGateway: 'COMPED',
-        paymentReference: `COMP_${userId}_${Date.now().toString(36)}`,
+        paymentReference: `COMP_${randomUUID()}`,
+        merchantReference: `KD_COMP_${randomUUID()}`,
         startedAt,
         expiresAt,
       },

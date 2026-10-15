@@ -23,4 +23,10 @@ export const paymentConfig = registerAs('payment', () => ({
   },
   returnUrl: process.env.PAYMENT_RETURN_URL || 'http://localhost:3001/orders',
   cancelUrl: process.env.PAYMENT_CANCEL_URL || 'http://localhost:3001/orders',
+  /**
+   * Where the browser is sent after a membership payment. Kept separate from the
+   * order `returnUrl` so the two flows can never be confused or mis-derived.
+   */
+  membershipReturnUrl:
+    process.env.MEMBERSHIP_RETURN_URL || 'http://localhost:3001/membership',
 }));

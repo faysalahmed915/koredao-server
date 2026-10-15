@@ -1,61 +1,27 @@
 /**
- * Application User Roles (Single Source of Truth)
+ * Application User Roles — derived, never duplicated.
  *
- * Values intentionally mirror the Prisma `UserRole` enum *names* exactly, so a
- * role string read from the database, from a Better-Auth session, or from a
- * frontend payload is always valid here without any case coercion.
+ * This module deliberately **re-exports the Prisma-generated `UserRole`** rather
+ * than declaring a parallel enum. A hand-maintained copy previously drifted from
+ * the database (lowercase values vs Prisma's uppercase names), which silently
+ * broke `isValidRole`/`hasMinimumRole`. Deriving removes that entire class of bug
+ * and makes `ROLE_HIERARCHY` / `ROLE_LABELS` compile-checked exhaustively: adding
+ * a role to the schema without handling it here becomes a type error.
  *
  * Membership model
  * ----------------
- * `MEMBER` is a *subscription-backed* role that is layered on top of a user's
- * base role. A user holds MEMBER while they have an `ACTIVE` `Subscription`
- * whose `expiresAt` is in the future; they keep their base role (CUSTOMER /
- * VENDOR / ...) unchanged. See `ROLE_HIERARCHY` for how MEMBER ranks.
+ * `MEMBER` is a *subscription-backed* role layered on top of a user's base role.
+ * A user holds MEMBER while they have an `ACTIVE` `Subscription` whose
+ * `expiresAt` is in the future; their stored `role` (CUSTOMER / VENDOR / ...) is
+ * left untouched. The stored `MEMBER` value therefore does NOT by itself grant
+ * paid-marketplace access — see `RolesGuard`.
  */
 
-export enum UserRole {
-  /**
-   * Super Administrator / Platform Owner
-   * Unrestricted system-wide access: infrastructure, tenant config, audit logs, billing, staff management.
-   */
-  SUPER_ADMIN = 'SUPER_ADMIN',
+import { UserRole } from '@prisma/client';
 
-  /**
-   * Platform Administrator / Operations Manager
-   * Catalog management, order fulfillment, refund approvals, vendor onboarding, analytics.
-   */
-  ADMIN = 'ADMIN',
+export { UserRole };
 
-  /**
-   * Content & Dispute Moderator
-   * Review moderation, compliance approvals, customer support disputes, ticket handling.
-   */
-  MODERATOR = 'MODERATOR',
-
-  /**
-   * Merchant / Helper / Seller
-   * Storefront management, own service listings, inventory, payout requests, seller orders.
-   */
-  VENDOR = 'VENDOR',
-
-  /**
-   * Subscribed Member (paid)
-   * Granted by an ACTIVE subscription on top of the base role. Required for the
-   * paid marketplace actions: posting a job and taking a job.
-   */
-  MEMBER = 'MEMBER',
-
-  /**
-   * Customer / Buyer / Client
-   * Standard account: browsing, purchasing, order tracking, reviews, profile management.
-   */
-  CUSTOMER = 'CUSTOMER',
-}
-
-/**
- * Union type representing all valid role strings:
- * 'SUPER_ADMIN' | 'ADMIN' | 'MODERATOR' | 'VENDOR' | 'MEMBER' | 'CUSTOMER'
- */
+/** Union type representing all valid role strings. */
 export type Role = `${UserRole}`;
 
 /**
@@ -74,9 +40,9 @@ export const DEFAULT_ROLE: UserRole = UserRole.CUSTOMER;
  * Numerical hierarchy levels for Role-Based Access Control (RBAC).
  * Higher numerical value represents higher operational privilege.
  *
- * MEMBER (30) deliberately sits above CUSTOMER (20) and below VENDOR (40):
- * subscribing upgrades what a user may *do* on the marketplace, but it must
- * never grant vendor/staff authority they were not vetted for.
+ * MEMBER (30) sits above CUSTOMER (20) and below VENDOR (40): subscribing widens
+ * what a user may *do* on the marketplace without granting unvetted vendor or
+ * staff authority.
  */
 export const ROLE_HIERARCHY: Record<UserRole, number> = {
   [UserRole.SUPER_ADMIN]: 100,
@@ -85,7 +51,7 @@ export const ROLE_HIERARCHY: Record<UserRole, number> = {
   [UserRole.VENDOR]: 40,
   [UserRole.MEMBER]: 30,
   [UserRole.CUSTOMER]: 20,
-} as const;
+};
 
 /**
  * Human-readable display labels for UI presentation, badges, and dropdowns.
@@ -97,23 +63,23 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   [UserRole.VENDOR]: 'Vendor / Helper',
   [UserRole.MEMBER]: 'Member',
   [UserRole.CUSTOMER]: 'Customer',
-} as const;
+};
 
 /**
  * Roles that are never gated by a paid membership: platform staff must always be
  * able to operate and moderate the marketplace.
  *
- * Typed as the literal-union `Role` (not the `UserRole` enum) so it composes
- * directly with the Prisma-generated `UserRole` union without a cast.
+ * NOTE: `MEMBER` is intentionally absent. Holding the stored MEMBER role is not
+ * proof of payment — only `SubscriptionsService.isActiveMember()` is.
  */
-export const MEMBERSHIP_EXEMPT_ROLES: readonly Role[] = Object.freeze([
-  'SUPER_ADMIN',
-  'ADMIN',
-  'MODERATOR',
-] as const);
+export const MEMBERSHIP_EXEMPT_ROLES: readonly UserRole[] = Object.freeze([
+  UserRole.SUPER_ADMIN,
+  UserRole.ADMIN,
+  UserRole.MODERATOR,
+]);
 
 /**
- * Type guard to check if an arbitrary string or value is a valid UserRole.
+ * Type guard to check if an arbitrary value is a valid UserRole.
  * Accepts any casing so legacy lowercase payloads keep working.
  */
 export const isValidRole = (value: unknown): value is UserRole => {

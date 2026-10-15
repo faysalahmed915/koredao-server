@@ -13,7 +13,8 @@ export class ConfirmSubscriptionDto {
 
   @ApiPropertyOptional({
     description:
-      'Gateway transaction reference. Required for real gateways; ignored in sandbox mode.',
+      'Deprecated and ignored. Payment verification is bound to the merchant reference stored server-side at checkout, so a client-supplied reference can never influence which plan is activated. Accepted only for backwards compatibility.',
+    deprecated: true,
     example: 'AMR-20240518-99XK21',
   })
   @IsOptional()

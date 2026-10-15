@@ -730,6 +730,7 @@ async function seed() {
         currency: 'BDT',
         paymentGateway: 'SEED_DEMO',
         paymentReference: `SEED_${grant.userId}_${grant.plan}`,
+        merchantReference: `KD_SEED_${grant.userId}_${grant.plan}`,
         startedAt,
         expiresAt: new Date(startedAt.getTime() + grant.durationDays * 86_400_000),
         autoRenew: true,

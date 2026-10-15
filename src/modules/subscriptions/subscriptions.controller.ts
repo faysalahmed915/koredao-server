@@ -9,8 +9,7 @@ import {
   Query,
   Res,
   UseGuards,
-} from '@nestjs/common';
-import {
+} from '@nestjs/common';import {
   ApiTags,
   ApiOperation,
   ApiResponse,
@@ -23,17 +22,15 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator.js';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
+import { Throttle } from '@nestjs/throttler';
 
 import { SubscriptionsService } from './subscriptions.service.js';
-import { CheckoutSubscriptionDto } from './dto/checkout-subscription.dto.js';
-import type { SubscriptionGateway } from './dto/checkout-subscription.dto.js';
+import {
+  CheckoutSubscriptionDto,
+  SUPPORTED_SUBSCRIPTION_GATEWAYS,
+  type SubscriptionGateway,
+} from './dto/checkout-subscription.dto.js';
 import { ConfirmSubscriptionDto } from './dto/confirm-subscription.dto.js';
-
-const SUPPORTED_CALLBACK_GATEWAYS: SubscriptionGateway[] = [
-  'aamarpay',
-  'piprapay',
-  'sandbox',
-];
 
 @ApiTags('Memberships & Subscriptions')
 @Controller('subscriptions')
@@ -113,39 +110,36 @@ export class SubscriptionsController {
 
   @Public()
   @Post(':gateway/callback')
+  // This route is unauthenticated by necessity and triggers an outbound gateway
+  // verification per call, so it is throttled far below the global default.
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({
     summary: 'Payment gateway redirect/callback target',
     description:
       'Reached by the browser returning from the gateway. Activates the membership only after the gateway confirms the payment server-to-server.',
   })
-  @ApiParam({ name: 'gateway', enum: SUPPORTED_CALLBACK_GATEWAYS })
+  @ApiParam({ name: 'gateway', enum: SUPPORTED_SUBSCRIPTION_GATEWAYS })
   async gatewayCallback(
     @Param('gateway') gateway: string,
-    @Query('subscriptionId') subscriptionId: string,
-    @Body() body: Record<string, unknown>,
+    @Query('subscriptionId') merchantReference: string,
     @Res() res: Response,
   ) {
-    const normalized = (SUPPORTED_CALLBACK_GATEWAYS as string[]).includes(gateway)
+    const normalized = (SUPPORTED_SUBSCRIPTION_GATEWAYS as readonly string[]).includes(
+      gateway,
+    )
       ? (gateway as SubscriptionGateway)
       : null;
 
-    if (!normalized || !subscriptionId) {
+    if (!normalized || !merchantReference) {
       res.redirect(`${process.env.APP_URL || 'http://localhost:3001'}/membership?status=invalid`);
       return;
     }
 
-    const reference =
-      (body?.pg_txnid as string) ||
-      (body?.mer_txnid as string) ||
-      (body?.bank_trxid as string) ||
-      (body?.pp_txnid as string) ||
-      (body?.transaction_id as string) ||
-      undefined;
-
+    // No request-body value is used for verification: the payment is always
+    // confirmed server-to-server against our stored merchant reference.
     const result = await this.subscriptionsService.handleGatewayCallback(
       normalized,
-      subscriptionId,
-      reference,
+      merchantReference,
     );
 
     const separator = result.returnUrl.includes('?') ? '&' : '?';

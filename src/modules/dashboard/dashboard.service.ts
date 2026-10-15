@@ -142,6 +142,9 @@ export class DashboardService {
               select: { id: true },
             },
           },
+          // Bounded so a long-lived account cannot degrade its own dashboard.
+          take: 50,
+          orderBy: { lastMessageAt: 'desc' },
         }),
         this.prisma.gig.findMany({
           where: { isActive: true },
@@ -312,6 +315,9 @@ export class DashboardService {
             select: { id: true },
           },
         },
+        // Bounded for the same reason as the customer view.
+        take: 50,
+        orderBy: { lastMessageAt: 'desc' },
       }),
     ]);
 

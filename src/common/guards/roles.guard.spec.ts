@@ -208,11 +208,24 @@ describe('RolesGuard', () => {
       await expect(guard.canActivate(ctx)).resolves.toBe(true);
     });
 
-    it('does not consult memberships for the MEMBER role itself', async () => {
+    it('does NOT trust the stored MEMBER role without an active subscription', async () => {
+      subscriptions.isActiveMember.mockResolvedValue(false);
+      const ctx = createMockContext({ id: 'u1', role: UserRole.MEMBER });
+
+      // The stored role is admin-assignable and permanent, so it must not be a
+      // lifetime bypass of the paid gate.
+      await expect(guard.canActivate(ctx)).rejects.toMatchObject({
+        status: HttpStatus.PAYMENT_REQUIRED,
+      });
+      expect(subscriptions.isActiveMember).toHaveBeenCalledWith('u1');
+    });
+
+    it('allows the MEMBER role when the subscription is active', async () => {
+      subscriptions.isActiveMember.mockResolvedValue(true);
       const ctx = createMockContext({ id: 'u1', role: UserRole.MEMBER });
 
       await expect(guard.canActivate(ctx)).resolves.toBe(true);
-      expect(subscriptions.isActiveMember).not.toHaveBeenCalled();
+      expect(subscriptions.isActiveMember).toHaveBeenCalledWith('u1');
     });
 
     it('exempts platform staff from the paid gate', async () => {

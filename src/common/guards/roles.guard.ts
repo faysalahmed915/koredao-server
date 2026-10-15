@@ -15,17 +15,11 @@ import { ALLOW_SELF_KEY } from '../decorators/allow-self.decorator.js';
 import { REQUIRE_MEMBERSHIP_KEY } from '../decorators/require-membership.decorator.js';
 import type { AuthenticatedUser } from '../decorators/current-user.decorator.js';
 import { UserRole } from '@prisma/client';
-import { MEMBERSHIP_EXEMPT_ROLES } from '../enums/role.enum.js';
+import {
+  MEMBERSHIP_EXEMPT_ROLES,
+  ROLE_HIERARCHY,
+} from '../enums/role.enum.js';
 import { SubscriptionsService } from '../../modules/subscriptions/subscriptions.service.js';
-
-const ROLE_HIERARCHY: Record<UserRole, number> = {
-  [UserRole.SUPER_ADMIN]: 100,
-  [UserRole.ADMIN]: 80,
-  [UserRole.MODERATOR]: 60,
-  [UserRole.VENDOR]: 40,
-  [UserRole.MEMBER]: 30,
-  [UserRole.CUSTOMER]: 20,
-};
 
 /**
  * Guard that verifies whether the authenticated user has sufficient permissions
@@ -129,12 +123,13 @@ export class RolesGuard implements CanActivate {
     }
 
     // 3. Paid marketplace gate.
+    //
+    // Only platform staff are exempt. Holding the stored `MEMBER` role is NOT
+    // sufficient: that value is admin-assignable and permanent, so trusting it
+    // would hand out a lifetime free pass. Membership is always re-derived from
+    // an ACTIVE, non-expired subscription.
     if (requireMembership) {
-      const exempt =
-        MEMBERSHIP_EXEMPT_ROLES.includes(userRole) ||
-        userRole === UserRole.MEMBER;
-
-      if (!exempt) {
+      if (!MEMBERSHIP_EXEMPT_ROLES.includes(userRole)) {
         const isMember = await this.subscriptionsService.isActiveMember(user.id);
         if (!isMember) {
           // 402 lets the client distinguish "pay to unlock" from "forbidden".
