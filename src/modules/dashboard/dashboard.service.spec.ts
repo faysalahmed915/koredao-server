@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DashboardService } from './dashboard.service.js';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service.js';
 import { PrismaService } from '../../core/database/prisma.service.js';
 import { UserRole, OrderStatus, EscrowStatus, VerificationStatus } from '@prisma/client';
 
@@ -47,7 +48,29 @@ describe('DashboardService', () => {
     };
   };
 
+  let subscriptions: {
+    getMyMembership: ReturnType<typeof vi.fn>;
+    isActiveMember: ReturnType<typeof vi.fn>;
+  };
+
   beforeEach(async () => {
+    subscriptions = {
+      // Default: no caller holds a membership, so the plain role-specific
+      // dashboards are exercised. Individual tests override this.
+      getMyMembership: vi.fn().mockResolvedValue({
+        isMember: false,
+        plan: null,
+        planName: null,
+        status: null,
+        startedAt: null,
+        expiresAt: null,
+        daysRemaining: null,
+        autoRenew: false,
+        subscriptionId: null,
+      }),
+      isActiveMember: vi.fn().mockResolvedValue(false),
+    };
+
     prisma = {
       order: {
         findMany: vi.fn(),
@@ -93,6 +116,10 @@ describe('DashboardService', () => {
       providers: [
         DashboardService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: SubscriptionsService,
+          useValue: subscriptions,
+        },
       ],
     }).compile();
 
@@ -179,6 +206,51 @@ describe('DashboardService', () => {
         expect(res.recentOrders.length).toBe(2);
         expect(res.recentAssignments.length).toBe(1);
         expect(res.recommendedGigs.length).toBe(1);
+      }
+    });
+  });
+
+  describe('Member Dashboard', () => {
+    it('should return the MEMBER workspace for a subscribed customer', async () => {
+      subscriptions.getMyMembership.mockResolvedValue({
+        isMember: true,
+        plan: 'MEMBER_MONTHLY',
+        planName: 'Member Monthly',
+        status: 'ACTIVE',
+        startedAt: new Date('2026-01-01T00:00:00.000Z'),
+        expiresAt: new Date('2099-01-31T00:00:00.000Z'),
+        daysRemaining: 30,
+        autoRenew: true,
+        subscriptionId: 'sub-1',
+      });
+
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.assignment.findMany.mockResolvedValue([]);
+      prisma.conversation.findMany.mockResolvedValue([]);
+      prisma.gig.findMany.mockResolvedValue([]);
+
+      const res = await service.getMetrics('user-1', UserRole.CUSTOMER);
+
+      expect(res.role).toBe('MEMBER');
+      if (res.role === 'MEMBER') {
+        expect(res.membership.isMember).toBe(true);
+        expect(res.membership.planName).toBe('Member Monthly');
+        expect(res.perks.canPostJobs).toBe(true);
+        expect(res.perks.canTakeJobs).toBe(true);
+      }
+    });
+
+    it('should keep the plain CUSTOMER dashboard when no membership is active', async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.assignment.findMany.mockResolvedValue([]);
+      prisma.conversation.findMany.mockResolvedValue([]);
+      prisma.gig.findMany.mockResolvedValue([]);
+
+      const res = await service.getMetrics('user-2', UserRole.CUSTOMER);
+
+      expect(res.role).toBe('CUSTOMER');
+      if (res.role === 'CUSTOMER') {
+        expect(res.membership?.isMember).toBe(false);
       }
     });
   });

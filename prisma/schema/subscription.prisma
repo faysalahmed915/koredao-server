@@ -1,0 +1,32 @@
+/// Paid platform membership.
+///
+/// A user whose `Subscription.status` is `ACTIVE` and whose `expiresAt` is in
+/// the future is treated as holding the `MEMBER` role **in addition to** their
+/// base `User.role`. Membership is deliberately modelled as a separate record
+/// rather than an overwrite of `User.role` so that subscribing never strips a
+/// user of their existing authority (VENDOR helpers keep their vendor powers,
+/// CUSTOMERs keep their buyer identity).
+model Subscription {
+  id               String             @id @default(cuid())
+  userId           String
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan             SubscriptionPlan
+  status           SubscriptionStatus @default(PENDING)
+  /// Amount charged in the smallest currency unit (poisha) to avoid float drift.
+  amount           Int                @default(0)
+  currency         String             @default("BDT")
+  /// Payment gateway that produced this subscription (aamarpay | piprapay | sandbox).
+  paymentGateway   String?
+  /// Unique gateway/ledger reference. Enforces idempotent activation.
+  paymentReference String?            @unique
+  startedAt        DateTime?
+  expiresAt        DateTime?
+  cancelledAt      DateTime?
+  autoRenew        Boolean            @default(false)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([userId, status])
+  @@index([status, expiresAt])
+  @@map("subscription")
+}

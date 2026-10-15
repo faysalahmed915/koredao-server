@@ -15,6 +15,8 @@ import {
   EscrowStatus,
   WalletTransactionType,
   CheckpointStatus,
+  SubscriptionPlan,
+  SubscriptionStatus,
 } from '@prisma/client';
 import { hashPassword } from 'better-auth/crypto';
 
@@ -45,6 +47,7 @@ async function seed() {
   await prisma.handwritingSample.deleteMany();
   await prisma.customerProfile.deleteMany();
   await prisma.vendorProfile.deleteMany();
+  await prisma.subscription.deleteMany();
   await prisma.account.deleteMany();
   await prisma.session.deleteMany();
   await prisma.user.deleteMany();
@@ -686,6 +689,55 @@ async function seed() {
     createdCustomers.push({ user, profile: user.customerProfile });
     console.log(`👤 Customer created: ${c.name} (${c.university})`);
   }
+
+  // 4b. SEED MEMBERSHIPS (subscription-backed MEMBER role)
+  //
+  // Membership is layered ON TOP of the base role: every verified helper keeps
+  // `VENDOR` authority and additionally counts as a MEMBER, and the first demo
+  // student is a subscribed member so the paid marketplace gates can be
+  // demonstrated from both sides without a real payment.
+  console.log('💎 Seeding memberships...');
+
+  const now = Date.now();
+  const membershipGrants: {
+    userId: string;
+    plan: SubscriptionPlan;
+    durationDays: number;
+    price: number;
+  }[] = [
+    ...createdVendors.map((v) => ({
+      userId: v.user.id,
+      plan: SubscriptionPlan.MEMBER_YEARLY,
+      durationDays: 365,
+      price: 399900,
+    })),
+    {
+      userId: createdCustomers[0].user.id,
+      plan: SubscriptionPlan.MEMBER_MONTHLY,
+      durationDays: 30,
+      price: 49900,
+    },
+  ];
+
+  for (const grant of membershipGrants) {
+    const startedAt = new Date(now - 1000 * 60 * 60 * 24 * 5); // started 5 days ago
+    await prisma.subscription.create({
+      data: {
+        userId: grant.userId,
+        plan: grant.plan,
+        status: SubscriptionStatus.ACTIVE,
+        amount: grant.price,
+        currency: 'BDT',
+        paymentGateway: 'SEED_DEMO',
+        paymentReference: `SEED_${grant.userId}_${grant.plan}`,
+        startedAt,
+        expiresAt: new Date(startedAt.getTime() + grant.durationDays * 86_400_000),
+        autoRenew: true,
+      },
+    });
+  }
+
+  console.log(`💎 Active memberships created: ${membershipGrants.length}`);
 
   // 5. CREATE GIGS (20+ realistic academic gigs)
   const gigConfigs = [
@@ -1416,6 +1468,9 @@ async function seed() {
   const checkpointCount = await prisma.projectCheckpoint.count();
   const conversationCount = await prisma.conversation.count();
   const messageCount = await prisma.chatMessage.count();
+  const activeMembershipCount = await prisma.subscription.count({
+    where: { status: SubscriptionStatus.ACTIVE },
+  });
 
   console.log('\n=======================================================');
   console.log('🎉 KOREDAO SUBSTANTIAL DEMO DATA SUCCESSFULLY SEEDED!');
@@ -1430,12 +1485,14 @@ async function seed() {
   console.log(`🎯 Milestones & Checkpoints: ${checkpointCount}`);
   console.log(`💬 Chat Conversations: ${conversationCount}`);
   console.log(`📨 Safety-Monitored Messages: ${messageCount}`);
+  console.log(`💎 Active Memberships (MEMBER role): ${activeMembershipCount}`);
   console.log('-------------------------------------------------------');
   console.log('Demo Credentials for Presentation:');
-  console.log('👑 Admin:   admin@koredao.com      | Password: Password123!');
-  console.log('🎓 Helper:  tanvir.buet@koredao.com | Password: Password123!');
-  console.log('🎓 Helper:  fahim.du@koredao.com    | Password: Password123!');
-  console.log('👤 Student: saad.student@koredao.com| Password: Password123!');
+  console.log('👑 Admin:        admin@koredao.com        | Password: Password123!');
+  console.log('🎓 Helper:       tanvir.buet@koredao.com  | Password: Password123! (VENDOR + MEMBER)');
+  console.log('🎓 Helper:       fahim.du@koredao.com     | Password: Password123! (VENDOR + MEMBER)');
+  console.log('💎 Member:       saad.student@koredao.com | Password: Password123! (CUSTOMER + MEMBER)');
+  console.log('👤 Student:      lamia.student@koredao.com| Password: Password123! (no membership)');
   console.log('=======================================================\n');
 }
 
