@@ -117,6 +117,31 @@ export const envSchema = z
       .default(100),
 
     // -----------------------------------------------------------------------
+    // Client IP resolution (required for per-client rate limiting)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Value for Express's `trust proxy`. Accepts a hop count (`1`), a
+     * `proxy-addr` preset/CIDR list (`loopback, 10.0.0.0/8`) or `false`.
+     * Only enable when the app really sits behind a trusted proxy.
+     */
+    TRUST_PROXY: z.string().optional().default('loopback, uniquelocal'),
+
+    /** Headers Better Auth may read the client address from, in priority order. */
+    IP_ADDRESS_HEADERS: z
+      .string()
+      .optional()
+      .default('x-forwarded-for,x-real-ip,cf-connecting-ip'),
+
+    /** Proxy hops to skip when walking a forwarded chain (IP or CIDR list). */
+    TRUSTED_PROXY_IPS: z
+      .string()
+      .optional()
+      .default(
+        '127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7',
+      ),
+
+    // -----------------------------------------------------------------------
     // Better Auth
     // -----------------------------------------------------------------------
 

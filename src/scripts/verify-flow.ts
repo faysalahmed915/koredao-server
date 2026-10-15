@@ -12,6 +12,7 @@ import { ProfilesService } from '../modules/profiles/profiles.service.js';
 import { OrdersService } from '../modules/orders/orders.service.js';
 import { ChatService } from '../modules/chat/chat.service.js';
 import { MilestonesService } from '../modules/milestones/milestones.service.js';
+import { normalizePostgresSslMode } from '../core/database/connection-string.js';
 
 const RUN_ID = Date.now().toString(36);
 let passed = 0;
@@ -39,7 +40,10 @@ async function expectThrow(label: string, fn: () => Promise<unknown>) {
 }
 
 async function main() {
-  const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+  const adapter = new PrismaPg({
+    connectionString: normalizePostgresSslMode(process.env.DATABASE_URL)
+      .connectionString,
+  });
   const prisma = new PrismaClient({ adapter });
   await prisma.$connect();
 

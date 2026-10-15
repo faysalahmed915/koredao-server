@@ -19,9 +19,11 @@ import {
   SubscriptionStatus,
 } from '@prisma/client';
 import { hashPassword } from 'better-auth/crypto';
+import { normalizePostgresSslMode } from '../core/database/connection-string.js';
 
 const adapter = new PrismaPg({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: normalizePostgresSslMode(process.env.DATABASE_URL)
+    .connectionString,
 });
 const prisma = new PrismaClient({ adapter });
 

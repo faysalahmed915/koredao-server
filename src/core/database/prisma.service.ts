@@ -7,6 +7,8 @@ import {
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 
+import { normalizePostgresSslMode } from './connection-string.js';
+
 @Injectable()
 export class PrismaService
   extends PrismaClient
@@ -14,9 +16,21 @@ export class PrismaService
   private readonly logger = new Logger(PrismaService.name);
 
   constructor() {
-    const adapter = new PrismaPg({
-      connectionString: process.env.DATABASE_URL,
-    });
+    // Make TLS verification explicit: `sslmode=require` is currently aliased to
+    // `verify-full` by pg 8 but adopts weaker libpq semantics in pg 9.
+    // See connection-string.ts for the full rationale.
+    const { connectionString, upgradedFrom } = normalizePostgresSslMode(
+      process.env.DATABASE_URL,
+    );
+
+    if (upgradedFrom) {
+      // Logged once, at construction, so the behaviour change is never silent.
+      new Logger('DatabaseTls').log(
+        `DATABASE_URL used sslmode=${upgradedFrom}; upgraded to sslmode=verify-full so certificate verification is explicit.`,
+      );
+    }
+
+    const adapter = new PrismaPg({ connectionString });
 
     super({ adapter });
   }
