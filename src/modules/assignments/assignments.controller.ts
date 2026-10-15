@@ -22,6 +22,7 @@ import type { AuthenticatedUser } from '../../common/decorators/current-user.dec
 import { Public } from '../../common/decorators/public.decorator.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { MinRole } from '../../common/decorators/min-role.decorator.js';
+import { RequireMembership } from '../../common/decorators/require-membership.decorator.js';
 import { Roles } from '../../common/decorators/roles.decorator.js';
 import { UserRole } from '@prisma/client';
 
@@ -40,13 +41,16 @@ export class AssignmentsController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @Roles(UserRole.CUSTOMER)
+  @RequireMembership()
   @ApiCookieAuth('better-auth.session_token')
   @ApiOperation({
     summary: 'Post a new assignment / project request (Upwork model)',
-    description: 'Creates an open academic request that verified helpers can bid on. Restricted to students/customers.',
+    description:
+      'Creates an open academic request that verified helpers can bid on. Restricted to customers holding an active MEMBER membership.',
   })
   @ApiResponse({ status: 201, description: 'Assignment posted successfully.' })
   @ApiResponse({ status: 400, description: 'Validation failed.' })
+  @ApiResponse({ status: 402, description: 'Payment Required: an active MEMBER subscription is needed.' })
   @ApiResponse({ status: 403, description: 'Forbidden: only customers may post jobs.' })
   @ApiResponse({ status: 409, description: 'Weekly or active job posting limit reached.' })
   create(
@@ -124,12 +128,16 @@ export class AssignmentsController {
   @Post(':id/bids')
   @HttpCode(HttpStatus.CREATED)
   @MinRole(UserRole.VENDOR)
+  @RequireMembership()
   @ApiCookieAuth('better-auth.session_token')
   @ApiOperation({
     summary: 'Submit a proposal / bid on an open assignment (Verified Helpers only)',
+    description:
+      'Requires an approved helper profile AND an active MEMBER membership.',
   })
   @ApiParam({ name: 'id', description: 'Assignment CUID' })
   @ApiResponse({ status: 201, description: 'Bid submitted successfully.' })
+  @ApiResponse({ status: 402, description: 'Payment Required: an active MEMBER subscription is needed.' })
   @ApiResponse({ status: 403, description: 'Forbidden: caller is not an approved helper.' })
   @ApiResponse({ status: 409, description: 'Assignment closed or bidding self.' })
   submitBid(

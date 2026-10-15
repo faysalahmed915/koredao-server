@@ -1,48 +1,27 @@
 /**
- * Application User Roles (E-Commerce Standard Hierarchy)
+ * Application User Roles — derived, never duplicated.
  *
- * Single Source of Truth (SSOT) for authorization roles across the platform.
- * This file is completely self-contained (zero backend dependencies) so that it can
- * be copied directly to frontend applications (Next.js, React, mobile apps) or shared
- * across microservices to maintain strict type safety and permission parity.
+ * This module deliberately **re-exports the Prisma-generated `UserRole`** rather
+ * than declaring a parallel enum. A hand-maintained copy previously drifted from
+ * the database (lowercase values vs Prisma's uppercase names), which silently
+ * broke `isValidRole`/`hasMinimumRole`. Deriving removes that entire class of bug
+ * and makes `ROLE_HIERARCHY` / `ROLE_LABELS` compile-checked exhaustively: adding
+ * a role to the schema without handling it here becomes a type error.
+ *
+ * Membership model
+ * ----------------
+ * `MEMBER` is a *subscription-backed* role layered on top of a user's base role.
+ * A user holds MEMBER while they have an `ACTIVE` `Subscription` whose
+ * `expiresAt` is in the future; their stored `role` (CUSTOMER / VENDOR / ...) is
+ * left untouched. The stored `MEMBER` value therefore does NOT by itself grant
+ * paid-marketplace access — see `RolesGuard`.
  */
 
-export enum UserRole {
-  /**
-   * Super Administrator / Platform Owner
-   * Unrestricted system-wide access: infrastructure, tenant config, audit logs, billing, staff management.
-   */
-  SUPER_ADMIN = 'super_admin',
+import { UserRole } from '@prisma/client';
 
-  /**
-   * Store Administrator / Operations Manager
-   * Global catalog management, order fulfillment, refund approvals, vendor onboarding, analytics.
-   */
-  ADMIN = 'admin',
+export { UserRole };
 
-  /**
-   * Content & Dispute Moderator
-   * Review moderation, product compliance/approvals, customer support disputes, ticket handling.
-   */
-  MODERATOR = 'moderator',
-
-  /**
-   * Merchant / Vendor / Seller
-   * Storefront management, own product listings, inventory, payout requests, seller orders.
-   */
-  VENDOR = 'vendor',
-
-  /**
-   * Customer / Buyer / End Client
-   * Standard shopper: browsing, purchasing, order tracking, writing reviews, profile management.
-   */
-  CUSTOMER = 'customer',
-}
-
-/**
- * Union type representing all valid role strings:
- * 'super_admin' | 'admin' | 'moderator' | 'vendor' | 'customer'
- */
+/** Union type representing all valid role strings. */
 export type Role = `${UserRole}`;
 
 /**
@@ -60,14 +39,19 @@ export const DEFAULT_ROLE: UserRole = UserRole.CUSTOMER;
 /**
  * Numerical hierarchy levels for Role-Based Access Control (RBAC).
  * Higher numerical value represents higher operational privilege.
+ *
+ * MEMBER (30) sits above CUSTOMER (20) and below VENDOR (40): subscribing widens
+ * what a user may *do* on the marketplace without granting unvetted vendor or
+ * staff authority.
  */
 export const ROLE_HIERARCHY: Record<UserRole, number> = {
   [UserRole.SUPER_ADMIN]: 100,
   [UserRole.ADMIN]: 80,
   [UserRole.MODERATOR]: 60,
   [UserRole.VENDOR]: 40,
+  [UserRole.MEMBER]: 30,
   [UserRole.CUSTOMER]: 20,
-} as const;
+};
 
 /**
  * Human-readable display labels for UI presentation, badges, and dropdowns.
@@ -76,18 +60,39 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   [UserRole.SUPER_ADMIN]: 'Super Admin',
   [UserRole.ADMIN]: 'Administrator',
   [UserRole.MODERATOR]: 'Moderator',
-  [UserRole.VENDOR]: 'Vendor / Seller',
+  [UserRole.VENDOR]: 'Vendor / Helper',
+  [UserRole.MEMBER]: 'Member',
   [UserRole.CUSTOMER]: 'Customer',
-} as const;
+};
 
 /**
- * Type guard to check if an arbitrary string or value is a valid UserRole.
+ * Roles that are never gated by a paid membership: platform staff must always be
+ * able to operate and moderate the marketplace.
+ *
+ * NOTE: `MEMBER` is intentionally absent. Holding the stored MEMBER role is not
+ * proof of payment — only `SubscriptionsService.isActiveMember()` is.
+ */
+export const MEMBERSHIP_EXEMPT_ROLES: readonly UserRole[] = Object.freeze([
+  UserRole.SUPER_ADMIN,
+  UserRole.ADMIN,
+  UserRole.MODERATOR,
+]);
+
+/**
+ * Type guard to check if an arbitrary value is a valid UserRole.
+ * Accepts any casing so legacy lowercase payloads keep working.
  */
 export const isValidRole = (value: unknown): value is UserRole => {
-  return (
-    typeof value === 'string' &&
-    (USER_ROLES as readonly string[]).includes(value)
-  );
+  if (typeof value !== 'string') return false;
+  return (USER_ROLES as readonly string[]).includes(value.trim().toUpperCase());
+};
+
+/**
+ * Normalizes an arbitrary role string to its canonical `UserRole`, or `null`.
+ */
+export const normalizeRole = (value: unknown): UserRole | null => {
+  if (!isValidRole(value)) return null;
+  return (value as string).trim().toUpperCase() as UserRole;
 };
 
 /**
@@ -97,8 +102,9 @@ export const hasMinimumRole = (
   userRole: string | undefined | null,
   requiredRole: UserRole,
 ): boolean => {
-  if (!userRole || !isValidRole(userRole)) {
+  const normalized = normalizeRole(userRole);
+  if (!normalized) {
     return false;
   }
-  return ROLE_HIERARCHY[userRole] >= ROLE_HIERARCHY[requiredRole];
+  return ROLE_HIERARCHY[normalized] >= ROLE_HIERARCHY[requiredRole];
 };

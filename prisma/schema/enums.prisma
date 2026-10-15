@@ -3,7 +3,26 @@ enum UserRole {
   ADMIN
   MODERATOR
   VENDOR
+  /// Subscribed platform participant.
+  /// Membership is granted by an ACTIVE `Subscription` and is layered ON TOP of
+  /// the holder's base role (a CUSTOMER who subscribes keeps CUSTOMER authority
+  /// and additionally counts as a MEMBER). It unlocks the paid marketplace
+  /// actions: posting a job and taking a job.
+  MEMBER
   CUSTOMER
+}
+
+enum SubscriptionPlan {
+  MEMBER_MONTHLY
+  MEMBER_QUARTERLY
+  MEMBER_YEARLY
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  CANCELLED
 }
 
 enum VerificationStatus {

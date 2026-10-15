@@ -23,6 +23,7 @@ import type { AuthenticatedUser } from '../../common/decorators/current-user.dec
 import { Public } from '../../common/decorators/public.decorator.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { MinRole } from '../../common/decorators/min-role.decorator.js';
+import { RequireMembership } from '../../common/decorators/require-membership.decorator.js';
 import { UserRole } from '@prisma/client';
 
 import { GigsService } from './gigs.service.js';
@@ -39,13 +40,16 @@ export class GigsController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @MinRole(UserRole.VENDOR)
+  @RequireMembership()
   @ApiCookieAuth('better-auth.session_token')
   @ApiOperation({
     summary: 'Publish a new academic service gig (Verified Helpers only)',
-    description: 'Creates a gig with single or 3-tier packages (Basic, Standard, Premium). Requires approved VENDOR role.',
+    description:
+      'Creates a gig with single or 3-tier packages (Basic, Standard, Premium). Requires an approved VENDOR role AND an active MEMBER membership.',
   })
   @ApiResponse({ status: 201, description: 'Gig created successfully.' })
   @ApiResponse({ status: 400, description: 'Validation failed.' })
+  @ApiResponse({ status: 402, description: 'Payment Required: an active MEMBER subscription is needed.' })
   @ApiResponse({ status: 403, description: 'Forbidden: caller is not an approved helper.' })
   create(
     @CurrentUser() user: AuthenticatedUser,

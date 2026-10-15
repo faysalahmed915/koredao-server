@@ -1,5 +1,21 @@
+/**
+ * Membership snapshot attached to every dashboard, so the UI can render member
+ * badges, upgrade prompts and renewal countdowns without a second request.
+ */
+export interface MembershipSnapshot {
+  isMember: boolean;
+  plan: string | null;
+  planName: string | null;
+  status: string | null;
+  startedAt: Date | null;
+  expiresAt: Date | null;
+  daysRemaining: number | null;
+  autoRenew: boolean;
+}
+
 export interface CustomerDashboardMetrics {
   role: 'CUSTOMER';
+  membership?: MembershipSnapshot;
   stats: {
     activeOrdersCount: number;
     underReviewOrdersCount: number;
@@ -48,6 +64,7 @@ export interface VendorDashboardMetrics {
   role: 'VENDOR';
   isApproved: boolean;
   verificationStatus: string;
+  membership?: MembershipSnapshot;
   stats: {
     availableBalance: number;
     pendingEscrowBalance: number;
@@ -137,7 +154,30 @@ export interface AdminDashboardMetrics {
   }>;
 }
 
+/**
+ * Dashboard for a user who holds the subscription-backed `MEMBER` role while
+ * their base role is CUSTOMER. It is the customer view plus membership state and
+ * the unlocked marketplace capabilities.
+ */
+export interface MemberDashboardMetrics {
+  role: 'MEMBER';
+  membership: MembershipSnapshot;
+  perks: {
+    canPostJobs: boolean;
+    canTakeJobs: boolean;
+    /** Platform fee applied to this member's completed orders, as a percentage. */
+    platformFeePercent: number;
+    /** Percentage points saved versus the standard 10% platform fee. */
+    feeDiscountPercent: number;
+  };
+  stats: CustomerDashboardMetrics['stats'];
+  recentOrders: CustomerDashboardMetrics['recentOrders'];
+  recentAssignments: CustomerDashboardMetrics['recentAssignments'];
+  recommendedGigs: CustomerDashboardMetrics['recommendedGigs'];
+}
+
 export type DashboardResponse =
   | CustomerDashboardMetrics
+  | MemberDashboardMetrics
   | VendorDashboardMetrics
   | AdminDashboardMetrics;

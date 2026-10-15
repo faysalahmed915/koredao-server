@@ -2,6 +2,8 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -10,16 +12,14 @@ import type { Request } from 'express';
 import { ROLES_KEY } from '../decorators/roles.decorator.js';
 import { MIN_ROLE_KEY } from '../decorators/min-role.decorator.js';
 import { ALLOW_SELF_KEY } from '../decorators/allow-self.decorator.js';
+import { REQUIRE_MEMBERSHIP_KEY } from '../decorators/require-membership.decorator.js';
 import type { AuthenticatedUser } from '../decorators/current-user.decorator.js';
 import { UserRole } from '@prisma/client';
-
-const ROLE_HIERARCHY: Record<UserRole, number> = {
-  [UserRole.SUPER_ADMIN]: 100,
-  [UserRole.ADMIN]: 80,
-  [UserRole.MODERATOR]: 60,
-  [UserRole.VENDOR]: 40,
-  [UserRole.CUSTOMER]: 20,
-};
+import {
+  MEMBERSHIP_EXEMPT_ROLES,
+  ROLE_HIERARCHY,
+} from '../enums/role.enum.js';
+import { SubscriptionsService } from '../../modules/subscriptions/subscriptions.service.js';
 
 /**
  * Guard that verifies whether the authenticated user has sufficient permissions
@@ -27,12 +27,20 @@ const ROLE_HIERARCHY: Record<UserRole, number> = {
  * 1. `@AllowSelf`: Matching the user's ID against the route parameter (e.g. self-profile management).
  * 2. `@Roles(...)`: Exact role matching against a whitelist.
  * 3. `@MinRole(...)`: Hierarchical minimum role level check.
+ * 4. `@RequireMembership()`: The subscription-backed `MEMBER` role (paid marketplace actions).
+ *
+ * The role criteria (1–3) are combined with OR and are evaluated before the
+ * membership gate, so a caller who is not allowed at all receives `403` rather
+ * than a misleading "pay to unlock" `402`.
  */
 @Injectable()
 export class RolesGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) { }
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly subscriptionsService: SubscriptionsService,
+  ) { }
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     // RBAC metadata is defined on HTTP controllers. WebSocket gateways do not
     // carry route params / user context in the same shape, so skip them.
     if (context.getType() !== 'http') {
@@ -57,11 +65,17 @@ export class RolesGuard implements CanActivate {
       [handler, targetClass],
     );
 
+    const requireMembership = this.reflector.getAllAndOverride<boolean | undefined>(
+      REQUIRE_MEMBERSHIP_KEY,
+      [handler, targetClass],
+    );
+
     // If no RBAC metadata is configured on the handler or class, permit access
     if (
       (!requiredRoles || requiredRoles.length === 0) &&
       !minRole &&
-      !allowSelfParam
+      !allowSelfParam &&
+      !requireMembership
     ) {
       return true;
     }
@@ -75,35 +89,64 @@ export class RolesGuard implements CanActivate {
       );
     }
 
-    // 1. Check if resource ownership / self-access is permitted
-    if (allowSelfParam) {
-      const targetParamValue = request.params?.[allowSelfParam];
-      if (targetParamValue && targetParamValue === user.id) {
-        return true;
-      }
-    }
-
     const userRole = user.role as UserRole;
 
-    // 2. Check exact whitelist role requirements
+    // 1. Check if resource ownership / self-access is permitted
+    if (allowSelfParam && request.params?.[allowSelfParam] === user.id) {
+      return true;
+    }
+
+    // 2. Role criteria (exact whitelist OR hierarchical minimum).
+    const hasRoleCriteria =
+      (requiredRoles?.length ?? 0) > 0 || minRole !== undefined;
+
+    let roleSatisfied = !hasRoleCriteria;
+
     if (requiredRoles && requiredRoles.length > 0) {
       if (requiredRoles.includes(userRole)) {
-        return true;
+        roleSatisfied = true;
       }
     }
 
-    // 3. Check hierarchical minimum role requirement
     if (minRole) {
       const userLevel = ROLE_HIERARCHY[userRole] ?? 0;
       const minLevel = ROLE_HIERARCHY[minRole] ?? Infinity;
       if (userLevel >= minLevel) {
-        return true;
+        roleSatisfied = true;
       }
     }
 
-    // If role criteria failed to match, deny access
-    throw new ForbiddenException(
-      `Access denied: Insufficient permissions for role '${userRole}'.`,
-    );
+    if (!roleSatisfied) {
+      throw new ForbiddenException(
+        `Access denied: Insufficient permissions for role '${userRole}'.`,
+      );
+    }
+
+    // 3. Paid marketplace gate.
+    //
+    // Only platform staff are exempt. Holding the stored `MEMBER` role is NOT
+    // sufficient: that value is admin-assignable and permanent, so trusting it
+    // would hand out a lifetime free pass. Membership is always re-derived from
+    // an ACTIVE, non-expired subscription.
+    if (requireMembership) {
+      if (!MEMBERSHIP_EXEMPT_ROLES.includes(userRole)) {
+        const isMember = await this.subscriptionsService.isActiveMember(user.id);
+        if (!isMember) {
+          // 402 lets the client distinguish "pay to unlock" from "forbidden".
+          throw new HttpException(
+            {
+              statusCode: HttpStatus.PAYMENT_REQUIRED,
+              error: 'Membership Required',
+              message:
+                'An active KoreDao membership is required for this action. Subscribe to post jobs and take jobs.',
+              code: 'MEMBERSHIP_REQUIRED',
+            },
+            HttpStatus.PAYMENT_REQUIRED,
+          );
+        }
+      }
+    }
+
+    return true;
   }
 }

@@ -4,6 +4,7 @@ export * from './decorators/public.decorator.js';
 export * from './decorators/current-user.decorator.js';
 export * from './decorators/roles.decorator.js';
 export * from './decorators/min-role.decorator.js';
+export * from './decorators/require-membership.decorator.js';
 export * from './decorators/allow-self.decorator.js';
 export * from './decorators/correlation-id.decorator.js';
 export * from './filters/http-exception.filter.js';

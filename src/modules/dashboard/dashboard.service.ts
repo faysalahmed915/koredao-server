@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../core/database/prisma.service.js';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service.js';
 import {
   UserRole,
   OrderStatus,
@@ -9,21 +10,34 @@ import {
 import type {
   DashboardResponse,
   CustomerDashboardMetrics,
+  MemberDashboardMetrics,
   VendorDashboardMetrics,
   AdminDashboardMetrics,
+  MembershipSnapshot,
 } from './dto/dashboard-metrics.dto.js';
 
 @Injectable()
 export class DashboardService {
   private readonly logger = new Logger(DashboardService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly subscriptions: SubscriptionsService,
+  ) {}
 
   /**
-   * Main entry point: aggregates role-specific dashboard metrics and actionable queues
+   * Main entry point: aggregates role-specific dashboard metrics and actionable queues.
+   *
+   * The effective dashboard role is resolved as follows:
+   * - Platform staff (ADMIN / SUPER_ADMIN / MODERATOR) -> command centre.
+   * - VENDOR -> helper workspace (membership is reported alongside).
+   * - CUSTOMER with an ACTIVE subscription -> MEMBER view.
+   * - CUSTOMER otherwise -> student view.
    */
   async getMetrics(userId: string, role: UserRole | string): Promise<DashboardResponse> {
     const userRole = role as UserRole;
+    const membership = await this.subscriptions.getMyMembership(userId);
+    const snapshot = this.toSnapshot(membership);
 
     if (
       userRole === UserRole.ADMIN ||
@@ -34,17 +48,69 @@ export class DashboardService {
     }
 
     if (userRole === UserRole.VENDOR) {
-      return this.getVendorMetrics(userId);
+      return this.getVendorMetrics(userId, snapshot);
     }
 
-    // Default to Student/Customer view
-    return this.getCustomerMetrics(userId);
+    const customerMetrics = await this.getCustomerMetrics(userId, snapshot);
+
+    // A subscribed customer sees the MEMBER workspace rather than the plain
+    // student dashboard, because they can now post and take jobs.
+    if (membership.isMember) {
+      return this.toMemberMetrics(customerMetrics, snapshot);
+    }
+
+    return customerMetrics;
+  }
+
+  private toSnapshot(membership: {
+    isMember: boolean;
+    plan: string | null;
+    planName: string | null;
+    status: string | null;
+    startedAt: Date | null;
+    expiresAt: Date | null;
+    daysRemaining: number | null;
+    autoRenew: boolean;
+  }): MembershipSnapshot {
+    return {
+      isMember: membership.isMember,
+      plan: membership.plan,
+      planName: membership.planName,
+      status: membership.status,
+      startedAt: membership.startedAt,
+      expiresAt: membership.expiresAt,
+      daysRemaining: membership.daysRemaining,
+      autoRenew: membership.autoRenew,
+    };
+  }
+
+  private toMemberMetrics(
+    customer: CustomerDashboardMetrics,
+    membership: MembershipSnapshot,
+  ): MemberDashboardMetrics {
+    return {
+      role: 'MEMBER',
+      membership,
+      perks: {
+        canPostJobs: true,
+        canTakeJobs: true,
+        platformFeePercent: 8,
+        feeDiscountPercent: 2,
+      },
+      stats: customer.stats,
+      recentOrders: customer.recentOrders,
+      recentAssignments: customer.recentAssignments,
+      recommendedGigs: customer.recommendedGigs,
+    };
   }
 
   /**
    * Aggregates Student / Customer metrics
    */
-  private async getCustomerMetrics(userId: string): Promise<CustomerDashboardMetrics> {
+  private async getCustomerMetrics(
+    userId: string,
+    membership?: MembershipSnapshot,
+  ): Promise<CustomerDashboardMetrics> {
     const [orders, assignments, conversations, recommendedGigs] =
       await Promise.all([
         this.prisma.order.findMany({
@@ -76,6 +142,9 @@ export class DashboardService {
               select: { id: true },
             },
           },
+          // Bounded so a long-lived account cannot degrade its own dashboard.
+          take: 50,
+          orderBy: { lastMessageAt: 'desc' },
         }),
         this.prisma.gig.findMany({
           where: { isActive: true },
@@ -126,6 +195,7 @@ export class DashboardService {
 
     return {
       role: 'CUSTOMER',
+      ...(membership ? { membership } : {}),
       stats: {
         activeOrdersCount,
         underReviewOrdersCount,
@@ -174,7 +244,10 @@ export class DashboardService {
   /**
    * Aggregates Vendor / Academic Helper metrics
    */
-  private async getVendorMetrics(userId: string): Promise<VendorDashboardMetrics> {
+  private async getVendorMetrics(
+    userId: string,
+    membership?: MembershipSnapshot,
+  ): Promise<VendorDashboardMetrics> {
     const vendorProfile = await this.prisma.vendorProfile.findUnique({
       where: { userId },
       include: {
@@ -187,6 +260,7 @@ export class DashboardService {
         role: 'VENDOR',
         isApproved: false,
         verificationStatus: VerificationStatus.PENDING,
+        ...(membership ? { membership } : {}),
         stats: {
           availableBalance: 0,
           pendingEscrowBalance: 0,
@@ -241,6 +315,9 @@ export class DashboardService {
             select: { id: true },
           },
         },
+        // Bounded for the same reason as the customer view.
+        take: 50,
+        orderBy: { lastMessageAt: 'desc' },
       }),
     ]);
 
@@ -291,6 +368,7 @@ export class DashboardService {
       role: 'VENDOR',
       isApproved: vendorProfile.verificationStatus === VerificationStatus.APPROVED,
       verificationStatus: vendorProfile.verificationStatus,
+      ...(membership ? { membership } : {}),
       stats: {
         availableBalance: vendorProfile.wallet?.balance ?? 0,
         pendingEscrowBalance: vendorProfile.wallet?.pendingBalance ?? 0,
