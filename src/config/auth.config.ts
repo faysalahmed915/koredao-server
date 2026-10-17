@@ -19,6 +19,9 @@ export const authConfig = registerAs('auth', () => ({
       'http://localhost:3000',
       'http://localhost:3001',
       'http://localhost:5173',
+      'https://*.vercel.app',
+      'https://*.onrender.com',
+      'https://koredao-server.onrender.com',
       ...(process.env.BETTER_AUTH_URL ? [process.env.BETTER_AUTH_URL] : []),
       ...(process.env.BETTER_AUTH_TRUSTED_ORIGINS || '')
         .split(',')
