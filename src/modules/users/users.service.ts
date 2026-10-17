@@ -19,6 +19,9 @@ export const USER_SAFE_SELECT = {
   email: true,
   emailVerified: true,
   image: true,
+  realName: true,
+  realNameUpdatedAt: true,
+  realNameUpdatedBy: true,
   role: true,
   createdAt: true,
   updatedAt: true,
@@ -297,5 +300,34 @@ export class UsersService {
     return {
       message: `User '${id}' deleted successfully`,
     };
+  }
+
+  /**
+   * Sets or updates a user's verified real name.
+   * Only staff with moderator or above privileges may perform this action.
+   * Records who performed the update and when, following the existing
+   * vendor-review audit pattern (verifiedAt / verifiedById).
+   */
+  async updateRealName(
+    userId: string,
+    realName: string,
+    updatedById: string,
+  ) {
+    const _targetUser = await this.findById(userId);
+
+    const trimmed = realName.trim();
+    if (!trimmed) {
+      throw new Error('Real name must not be empty');
+    }
+
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        realName: trimmed,
+        realNameUpdatedAt: new Date(),
+        realNameUpdatedBy: updatedById,
+      },
+      select: USER_SAFE_SELECT,
+    });
   }
 }

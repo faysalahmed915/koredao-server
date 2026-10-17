@@ -282,11 +282,21 @@ export class ProfilesService {
         },
       }),
       // When approved, elevate user role to VENDOR if currently CUSTOMER
+      // and set the verified real name (with audit) when supplied by the reviewer
       ...(isApproved
         ? [
             this.prisma.user.update({
               where: { id: profile.userId },
-              data: { role: UserRole.VENDOR },
+              data: {
+                role: UserRole.VENDOR,
+                ...(dto.realName
+                  ? {
+                      realName: dto.realName.trim(),
+                      realNameUpdatedAt: new Date(),
+                      realNameUpdatedBy: adminId,
+                    }
+                  : {}),
+              },
             }),
             this.prisma.handwritingSample.updateMany({
               where: { vendorProfileId: profileId },

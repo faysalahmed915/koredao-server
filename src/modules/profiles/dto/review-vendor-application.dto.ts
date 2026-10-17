@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 import { VerificationStatus } from '@prisma/client';
 
 export class ReviewVendorApplicationDto {
@@ -13,10 +13,22 @@ export class ReviewVendorApplicationDto {
   status!: VerificationStatus;
 
   @ApiPropertyOptional({
-    description: 'Reason for rejection if application is rejected',
-    example: 'Student ID card image is blurred and unreadable. Please re-upload a clear copy.',
+    description:
+      'Reason for rejection if application is rejected, or verified real name if approved.',
+    example: 'John Doe',
   })
   @IsOptional()
   @IsString()
   rejectionReason?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "Verified real name of the user (only applied on approval). Set by the reviewing moderator after identity verification.",
+    example: 'John Doe',
+    minLength: 2,
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  realName?: string;
 }

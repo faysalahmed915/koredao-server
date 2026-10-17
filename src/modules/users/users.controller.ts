@@ -25,6 +25,7 @@ import { AllowSelf } from '../../common/decorators/allow-self.decorator.js';
 import { UsersService } from './users.service.js';
 import { CreateUserDto } from './dto/create-user.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
+import { UpdateRealNameDto } from './dto/update-real-name.dto.js';
 import { QueryUsersDto } from './dto/query-users.dto.js';
 import { UserRole } from '@prisma/client';
 
@@ -131,5 +132,37 @@ export class UsersController {
     @CurrentUser() currentUser: AuthenticatedUser,
   ) {
     return this.usersService.remove(id, currentUser);
+  }
+
+  /**
+   * Verified real name management
+   */
+  @Patch(':id/real-name')
+  @MinRole(UserRole.MODERATOR)
+  @ApiCookieAuth('better-auth.session_token')
+  @ApiOperation({
+    summary: 'Set or update a user verified real name (moderator + only)',
+    description:
+      'Sets or updates the user verified real name during identity verification. ' +
+      'Only users with MODERATOR role or above may perform this action. ' +
+      'Records who updated it and when. Real name is never shown publicly; ' +
+      'display name (`name`) is used by default.',
+  })
+  @ApiParam({ name: 'id', description: 'User CUID / ID string' })
+  @ApiResponse({ status: 200, description: 'Real name updated successfully.' })
+  @ApiResponse({ status: 400, description: 'Validation failed.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  @ApiResponse({ status: 403, description: 'Forbidden: Insufficient privileges.' })
+  @ApiResponse({ status: 404, description: 'User not found.' })
+  updateRealName(
+    @Param('id') id: string,
+    @Body() updateRealNameDto: UpdateRealNameDto,
+    @CurrentUser() currentUser: AuthenticatedUser,
+  ) {
+    return this.usersService.updateRealName(
+      id,
+      updateRealNameDto.realName,
+      currentUser.id,
+    );
   }
 }

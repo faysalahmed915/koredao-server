@@ -261,4 +261,45 @@ describe('UsersService', () => {
       ).rejects.toThrow(ForbiddenException);
     });
   });
+
+  describe('updateRealName', () => {
+    const updatedUser = {
+      ...mockUser,
+      realName: 'John Doe',
+      realNameUpdatedAt: new Date(),
+      realNameUpdatedBy: 'staff-1',
+    };
+
+    it('should set real name and audit fields when updated by staff', async () => {
+      prisma.user.findUnique.mockResolvedValue(mockUser);
+      prisma.user.update.mockResolvedValue(updatedUser);
+
+      const result = await service.updateRealName(
+        'user-123',
+        ' John Doe ',
+        'staff-1',
+      );
+
+      expect(result.realName).toBe('John Doe');
+      expect(result.realNameUpdatedBy).toBe('staff-1');
+      expect(result.realNameUpdatedAt).toBeDefined();
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-123' },
+        data: {
+          realName: 'John Doe',
+          realNameUpdatedAt: expect.any(Date),
+          realNameUpdatedBy: 'staff-1',
+        },
+        select: expect.any(Object),
+      });
+    });
+
+    it('should throw NotFoundException if user does not exist', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.updateRealName('non-existent', 'John Doe', 'staff-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
 });

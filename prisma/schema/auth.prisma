@@ -1,13 +1,16 @@
 model User {
-  id            String    @id @default(cuid())
-  name          String
-  email         String    @unique
-  emailVerified Boolean   @default(false)
-  image         String?
-  role          UserRole    @default(CUSTOMER)
-  lastSeenAt    DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id                String    @id @default(cuid())
+  name              String
+  email             String    @unique
+  emailVerified     Boolean   @default(false)
+  image             String?
+  realName          String?   @map("real_name")
+  realNameUpdatedAt DateTime? @map("real_name_updated_at")
+  realNameUpdatedBy String?   @map("real_name_updated_by")
+  role              UserRole    @default(CUSTOMER)
+  lastSeenAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
   sessions        Session[]
   accounts        Account[]
   subscriptions   Subscription[]
