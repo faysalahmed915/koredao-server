@@ -5,6 +5,7 @@ export interface AuthenticatedUser {
   id: string;
   email: string;
   name?: string;
+  realName?: string;
   role?: UserRole | string;
   [key: string]: unknown;
 }
