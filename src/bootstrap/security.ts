@@ -45,7 +45,7 @@ export function setupSecurity(app: INestApplication): void {
             styleSrc: ["'self'", "'unsafe-inline'"],
             imgSrc: ["'self'", 'data:', 'https:'],
             scriptSrc: ["'self'"],
-            connectSrc: ["'self'", 'https:'],
+            connectSrc: ["'self'", 'https:', 'wss:', 'https://koredao-server.onrender.com', 'wss://koredao-server.onrender.com'],
           },
         }
         : false,

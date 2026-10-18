@@ -13,16 +13,48 @@ import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { ChatService } from './chat.service.js';
 
+// Allowed browser origins for the real-time chat gateway.
+// Mirrors the HTTP CORS allowlist in bootstrap/security.ts: explicit
+// localhost dev origins + Render backend + any Vercel preview/prod domain,
+// plus extra origins from CORS_ORIGIN. `origin: '*'` can NEVER be used with
+// `credentials: true` (browsers reject it), so we validate explicitly.
+function isChatOriginAllowed(origin: string | undefined): boolean {
+  if (!origin) return true; // non-browser clients (curl, Node) have no Origin
+  const envOrigins = (process.env.CORS_ORIGIN || "")
+    .split(",")
+    .map((o) => o.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+  const defaults = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:5173",
+    "https://koredao-server.onrender.com",
+  ];
+  const allowed = new Set([...defaults, ...envOrigins]);
+  if (allowed.has(origin) || allowed.has(origin.replace(/\/$/, ""))) return true;
+  // Any Vercel deployment (prod + previews) for this frontend.
+  if (origin.startsWith("https://") && origin.endsWith(".vercel.app")) return true;
+  return false;
+}
+
 // The global ThrottlerGuard (HTTP rate limiting) is registered app-wide and would
 // otherwise run against WebSocket events, where it crashes trying to set HTTP
 // response headers (res.header). Real-time chat events must bypass it.
 @SkipThrottle()
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: (origin, callback) => {
+      if (isChatOriginAllowed(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`Chat WS CORS blocked origin: ${origin}`), false);
+      }
+    },
     credentials: true,
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Accept", "x-correlation-id"],
   },
-  namespace: '/chat',
+  namespace: "/chat",
 })
 export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
