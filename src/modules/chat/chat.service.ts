@@ -56,7 +56,7 @@ export class ChatService {
    */
   private socketServer?: Server;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   /**
    * Called by the ChatGateway on init to register the live Socket.io server.
@@ -199,6 +199,7 @@ export class ChatService {
   /**
    * Retrieves all conversations involving the current user
    */
+
   async getMyConversations(userId: string) {
     return this.prisma.conversation.findMany({
       where: {
@@ -207,22 +208,63 @@ export class ChatService {
           { vendorProfile: { userId } },
         ],
       },
-      orderBy: { lastMessageAt: 'desc' },
-      include: {
-        customer: { select: { id: true, name: true, image: true, email: true, lastSeenAt: true } },
+      orderBy: {
+        lastMessageAt: 'desc',
+      },
+      select: {
+        id: true,
+        orderId: true,
+        customerId: true,
+        vendorProfileId: true,
+        lastMessageAt: true,
+
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            image: true,
+            email: true,
+            lastSeenAt: true,
+          },
+        },
+
         vendorProfile: {
           select: {
             id: true,
             userId: true,
             university: true,
             department: true,
-            user: { select: { id: true, name: true, image: true, lastSeenAt: true } },
+            user: {
+              select: {
+                id: true,
+                name: true,
+                image: true,
+                lastSeenAt: true,
+              },
+            },
           },
         },
-        order: { select: { id: true, orderNumber: true, title: true, status: true } },
+
+        order: {
+          select: {
+            id: true,
+            orderNumber: true,
+            title: true,
+            status: true,
+          },
+        },
+
         messages: {
-          orderBy: { createdAt: 'desc' },
+          orderBy: {
+            createdAt: 'desc',
+          },
           take: 1,
+          select: {
+            id: true,
+            content: true,
+            createdAt: true,
+            senderId: true,
+          },
         },
       },
     });
@@ -458,8 +500,10 @@ export class ChatService {
     // Broadcast live to the conversation room so all joined participants receive
     // the message in real time (covers the REST send path, which previously
     // only relied on the WebSocket handler).
-    this.broadcastNewMessage(dto.conversationId, message);
+    // Echo clientTempId (not persisted) so the sender can idempotently replace
+    // its optimistic tmp-* placeholder instead of appending a duplicate key.
+    this.broadcastNewMessage(dto.conversationId, { ...message, clientTempId: dto.clientTempId });
 
-    return message;
+    return { ...message, clientTempId: dto.clientTempId };
   }
 }

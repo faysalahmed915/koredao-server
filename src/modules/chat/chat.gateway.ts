@@ -12,6 +12,8 @@ import { SkipThrottle } from '@nestjs/throttler';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { ChatService } from './chat.service.js';
+import { AuthService } from '../auth/auth.service.js';
+import type { IncomingHttpHeaders } from 'node:http';
 
 // Allowed browser origins for the real-time chat gateway.
 // Mirrors the HTTP CORS allowlist in bootstrap/security.ts: explicit
@@ -65,13 +67,30 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   // userId -> Set of socket ids, for presence broadcast.
   private readonly onlineUsers = new Map<string, Set<string>>();
 
-  constructor(private readonly chatService: ChatService) {}
+  constructor(
+    private readonly chatService: ChatService,
+    private readonly authService: AuthService
+  ) {}
 
-  handleConnection(client: Socket): void {
-    // The client passes its authenticated userId in the handshake query. We trust
-    // it here only for presence (last-seen) bookkeeping; all data access is still
-    // authorized at the REST/service layer. Presence is best-effort.
-    const userId = (client.handshake.query?.userId as string) || undefined;
+  async handleConnection(client: Socket): Promise<void> {
+    // Authenticate via Better-Auth session cookie (sent automatically with
+    // withCredentials: true). Never trust handshake.query.userId — any client
+    // can forge it and impersonate another user.
+    let userId: string | undefined;
+    const cookieHeader =
+      (client.handshake.headers as IncomingHttpHeaders)?.cookie;
+
+    if (cookieHeader) {
+      try {
+        const session = await this.authService.getSession(
+          client.handshake.headers as IncomingHttpHeaders
+        );
+        userId = session?.user?.id;
+      } catch {
+        // Session invalid or missing — userId stays undefined.
+      }
+    }
+
     if (userId) {
       (client.data as { userId?: string }).userId = userId;
       const set = this.onlineUsers.get(userId) ?? new Set<string>();
@@ -160,6 +179,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
       content: string;
       attachments?: string[];
       checkpointId?: string;
+      clientTempId?: string;
     },
   ) {
     try {
@@ -170,6 +190,7 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         content: data.content,
         attachments: data.attachments,
         checkpointId: data.checkpointId,
+        clientTempId: data.clientTempId,
       });
     } catch (err: any) {
       this.logger.error(`WS send_message failed: ${err?.message}`);

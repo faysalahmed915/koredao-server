@@ -178,6 +178,29 @@ describe('ChatService', () => {
       );
     });
 
+    it('should echo clientTempId for optimistic message replacement', async () => {
+      prisma.conversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vend-1' },
+      });
+      prisma.chatMessage.create.mockResolvedValue({
+        id: 'msg-real-123',
+        content: 'Hello world',
+        hasSafetyWarning: false,
+      });
+      prisma.conversation.update.mockResolvedValue({});
+
+      const res = await service.sendMessage('cust-1', {
+        conversationId: 'conv-1',
+        content: 'Hello world',
+        clientTempId: 'tmp-client-uuid-999',
+      });
+
+      expect(res.clientTempId).toBe('tmp-client-uuid-999');
+      expect(res.id).toBe('msg-real-123');
+    });
+
     it('should reject unauthorized user sending message to conversation', async () => {
       prisma.conversation.findUnique.mockResolvedValue({
         id: 'conv-1',
