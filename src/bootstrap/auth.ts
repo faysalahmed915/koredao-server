@@ -29,8 +29,15 @@ export function setupAuth(app: INestApplication, authInstance?: any): void {
     );
   }
 
-  // Mount handler on base path and all nested routes
+  // Mount handler on the base path and all nested routes.
+  // Express 5 (path-to-regexp v8) uses `{*name}` for wildcards — the old
+  // Express 4 `*` forms no longer match and silently 404 every handler route
+  // (this broke /api/auth/session, sign-in, register, ...). The array covers
+  // both the bare base path and every nested Better Auth sub-route.
   const normalizedBasePath = authBasePath.replace(/\/+$/, '');
-  expressApp.all(`${normalizedBasePath}{/*path}`, toNodeHandler(auth));
+  expressApp.all(
+    [normalizedBasePath, `${normalizedBasePath}/{*splat}`],
+    toNodeHandler(auth),
+  );
   logger.log(`🔐 Better Auth mounted at: ${normalizedBasePath}`);
 }
