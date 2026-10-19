@@ -37,4 +37,13 @@ export class SendMessageDto {
   @IsOptional()
   @IsString()
   checkpointId?: string;
+
+  @ApiProperty({
+    example: 'clxyz-temp-123',
+    description: 'Client-generated temporary id for optimistic message matching',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  clientTempId?: string;
 }
