@@ -10,7 +10,7 @@ import { CreateAssignmentDto } from './dto/create-assignment.dto.js';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto.js';
 import { CreateBidDto } from './dto/create-bid.dto.js';
 import { QueryAssignmentsDto } from './dto/query-assignments.dto.js';
-import { AssignmentStatus, BidStatus, VerificationStatus } from '@prisma/client';
+import { AssignmentStatus, BidStatus, OrderStatus, EscrowStatus, VerificationStatus } from '@prisma/client';
 
 export const ASSIGNMENT_PUBLIC_INCLUDE = {
   customer: {
@@ -295,6 +295,17 @@ export class AssignmentsService {
 
   /**
    * Customer accepts a vendor's proposal, marking the assignment as ASSIGNED.
+   *
+   * This operation is atomic and idempotent:
+   *  - Assignment status + acceptedBidId are updated.
+   *  - The chosen bid is marked ACCEPTED; all competing bids are REJECTED.
+   *  - An order (PENDING_PAYMENT) and its escrow holding (AWAITING_PAYMENT) are created.
+   *
+   * All writes occur inside a single Prisma transaction, so either everything
+   *  commits or nothing does. Repeated calls for the same (assignment, bid)
+   *  return the existing order instead of creating duplicates.
+   *
+   * Authorization: only the assignment owner (customer) may accept a bid.
    */
   async acceptBid(customerId: string, assignmentId: string, bidId: string) {
     const assignment = await this.prisma.assignment.findUnique({
@@ -305,8 +316,43 @@ export class AssignmentsService {
       throw new NotFoundException(`Assignment '${assignmentId}' not found`);
     }
 
+    // Authorization: only the assignment owner (customer) can accept a bid.
     if (assignment.customerId !== customerId) {
       throw new ForbiddenException('You do not have permission to accept bids for this assignment');
+    }
+
+    // Idempotency guard: if an order already exists for this assignment+bid,
+    // return it without mutating anything. Safe against duplicate requests
+    // (e.g. client retry after a successful response was lost in transit).
+    const existingOrder = await this.prisma.order.findFirst({
+      where: { assignmentId, bidId },
+      select: {
+        id: true,
+        orderNumber: true,
+        status: true,
+        customerId: true,
+        vendorProfileId: true,
+        totalAmount: true,
+        escrowHolding: true,
+      },
+    });
+
+    if (existingOrder) {
+      this.logger.log(
+        `Idempotent acceptBid: order ${existingOrder.id} already exists for assignmentId=${assignmentId} bidId=${bidId}. Returning existing order without mutation.`,
+      );
+
+      const acceptedBid = await this.prisma.bid.findUnique({
+        where: { id: bidId },
+        include: BID_VENDOR_INCLUDE,
+      });
+
+      return {
+        assignment: { ...assignment, status: AssignmentStatus.ASSIGNED },
+        acceptedBid,
+        order: existingOrder,
+        idempotent: true,
+      };
     }
 
     if (assignment.status !== AssignmentStatus.OPEN) {
@@ -324,37 +370,86 @@ export class AssignmentsService {
       throw new NotFoundException('Selected proposal does not exist on this assignment');
     }
 
-    // Atomic transaction: accept chosen bid, reject others, mark assignment assigned
-    const [updatedAssignment, acceptedBid] = await this.prisma.$transaction([
-      this.prisma.assignment.update({
+    if (bid.status !== BidStatus.PENDING) {
+      throw new ConflictException(`Bid '${bidId}' is already '${bid.status}' and cannot be accepted`);
+    }
+
+    // Financials derived from the accepted bid.
+    const totalAmount = bid.proposedPrice;
+    const platformFee = Math.round(totalAmount * 0.10); // Standard 10% platform fee
+    const netVendorAmount = totalAmount - platformFee;
+    const deadline = new Date(Date.now() + bid.deliveryDays * 24 * 60 * 60 * 1000);
+    const orderNumber = `ORD-${Date.now().toString().slice(-8)}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    const now = new Date();
+
+    // Single atomic transaction: assignment + bids + order + escrow holding.
+    const result = await this.prisma.$transaction(async (tx) => {
+      // 1. Mark assignment ASSIGNED and record the accepted bid.
+      const updatedAssignment = await tx.assignment.update({
         where: { id: assignmentId },
         data: {
           status: AssignmentStatus.ASSIGNED,
           acceptedBidId: bidId,
         },
         include: ASSIGNMENT_PUBLIC_INCLUDE,
-      }),
-      this.prisma.bid.update({
+      });
+
+      // 2. Accept the chosen bid.
+      const acceptedBid = await tx.bid.update({
         where: { id: bidId },
         data: { status: BidStatus.ACCEPTED },
         include: BID_VENDOR_INCLUDE,
-      }),
-      this.prisma.bid.updateMany({
+      });
+
+      // 3. Reject all competing bids on this assignment.
+      await tx.bid.updateMany({
         where: {
           assignmentId,
           id: { not: bidId },
         },
         data: { status: BidStatus.REJECTED },
-      }),
-    ]);
+      });
+
+      // 4. Create the order in PENDING_PAYMENT (funding still required to activate).
+      const order = await tx.order.create({
+        data: {
+          orderNumber,
+          customerId,
+          vendorProfileId: bid.vendorProfileId,
+          assignmentId: assignment.id,
+          bidId: bid.id,
+          title: assignment.title,
+          totalAmount,
+          platformFee,
+          netVendorAmount,
+          status: OrderStatus.PENDING_PAYMENT,
+          customerAcceptedAt: now,
+          deadline,
+          maxRevisions: 2, // Standard 2 revisions for assignments
+        },
+      });
+
+      // 5. Create the escrow holding in AWAITING_PAYMENT.
+      await tx.escrowHolding.create({
+        data: {
+          orderId: order.id,
+          amount: totalAmount,
+          status: EscrowStatus.AWAITING_PAYMENT,
+        },
+      });
+
+      return { assignment: updatedAssignment, acceptedBid, order };
+    });
 
     this.logger.log(
-      `Accepted bidId=${bidId} on assignmentId=${assignmentId}. Other proposals marked rejected.`,
+      `Accepted bidId=${bidId} on assignmentId=${assignmentId}. Order ${result.order.id} created. Other proposals marked rejected.`,
     );
 
     return {
-      assignment: updatedAssignment,
-      acceptedBid,
+      assignment: result.assignment,
+      acceptedBid: result.acceptedBid,
+      order: result.order,
+      idempotent: false,
     };
   }
 

@@ -1,6 +1,7 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { APP_GUARD, APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 
 import { AppController } from './app.controller.js';
@@ -70,6 +71,8 @@ import { RolesGuard } from './common/guards/roles.guard.js';
     // Core Singletons
     PrismaModule,
     HealthModule,
+    // Scheduled tasks (72-hour escrow auto-release worker)
+    ScheduleModule.forRoot(),
 
     // Domain Features
     AuthModule,

@@ -42,6 +42,10 @@ model Order {
   @@index([vendorProfileId])
   @@index([status])
   @@index([autoReleaseAt])
+  // Idempotency: one order per accepted assignment+bid combination.
+  // Nullable components (gig orders have null assignmentId/bidId) allow
+  // multiple NULLs per Postgres unique semantics, so gig orders are unaffected.
+  @@unique([assignmentId, bidId], name: "order_assignmentId_bidId_key")
   @@map("order")
 }
 
