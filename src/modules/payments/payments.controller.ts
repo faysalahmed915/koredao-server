@@ -16,8 +16,10 @@ import {
   ApiResponse,
   ApiCookieAuth,
 } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator.js';
+import { MinRole } from '../../common/decorators/min-role.decorator.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { PaymentsService } from './payments.service.js';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto.js';
@@ -114,5 +116,32 @@ export class PaymentsController {
     @Body() dto: VerifyPaymentDto,
   ) {
     return this.paymentsService.verifyPayment(user.id, dto);
+  }
+
+  @Get('history')
+  @ApiCookieAuth('better-auth.session_token')
+  @ApiOperation({
+    summary:
+      'Get the caller’s payment & escrow history (customer/member wallet ledger)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Payment history with summary totals returned.',
+  })
+  getPaymentHistory(@CurrentUser() user: AuthenticatedUser) {
+    return this.paymentsService.getPaymentHistory(user.id);
+  }
+
+  @Get('ledger')
+  @MinRole(UserRole.MODERATOR)
+  @ApiCookieAuth('better-auth.session_token')
+  @ApiOperation({
+    summary:
+      'Get the platform-wide financial ledger (vendor payouts, escrow movements, revenue) — staff only',
+  })
+  @ApiResponse({ status: 200, description: 'Platform ledger retrieved.' })
+  @ApiResponse({ status: 403, description: 'Forbidden: staff role required.' })
+  getPlatformLedger() {
+    return this.paymentsService.getPlatformLedger();
   }
 }

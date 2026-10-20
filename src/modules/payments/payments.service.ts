@@ -10,7 +10,11 @@ import { PrismaService } from '../../core/database/prisma.service.js';
 import { OrdersService } from '../orders/orders.service.js';
 import { InitiatePaymentDto, PaymentGateway } from './dto/initiate-payment.dto.js';
 import { VerifyPaymentDto } from './dto/verify-payment.dto.js';
-import { OrderStatus } from '@prisma/client';
+import {
+  OrderStatus,
+  EscrowStatus,
+  WalletTransactionType,
+} from '@prisma/client';
 
 export interface PaymentInitiationResult {
   paymentUrl: string;
@@ -364,6 +368,285 @@ export class PaymentsService {
       orderId: order.id,
       status: order.status,
       escrow: order.escrowHolding,
+    };
+  }
+
+  /**
+   * Customer / Member payment & escrow history ("wallet").
+   *
+   * Customers do not hold a stored-value balance — every payment is an
+   * escrow-funded order. This endpoint therefore powers the customer/member
+   * wallet page with a real ledger: each escrow movement (deposit, release,
+   * refund) derived from the caller's orders plus their membership
+   * subscription payments, and summary totals for the KPI cards.
+   */
+  async getPaymentHistory(userId: string) {
+    const [orders, subscriptions] = await Promise.all([
+      this.prisma.order.findMany({
+        where: { customerId: userId },
+        include: {
+          escrowHolding: true,
+          vendorProfile: {
+            include: { user: { select: { name: true, image: true } } },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        // Bounded so a long-lived account cannot degrade its own wallet page.
+        take: 50,
+      }),
+      this.prisma.subscription.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      }),
+    ]);
+
+    const entries: Array<{
+      id: string;
+      orderId: string;
+      orderNumber: string;
+      title: string;
+      amount: number;
+      type: 'ESCROW_DEPOSIT' | 'ESCROW_RELEASE' | 'REFUND' | 'SUBSCRIPTION';
+      status: string;
+      gateway: string | null;
+      transactionRef: string | null;
+      occurredAt: Date;
+      vendorName: string | null;
+    }> = [];
+
+    for (const order of orders) {
+      const escrow = order.escrowHolding;
+      const vendorName = order.vendorProfile?.user?.name ?? null;
+
+      if (escrow?.fundedAt) {
+        entries.push({
+          id: `${order.id}-deposit`,
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          title: order.title,
+          amount: escrow.amount,
+          type: 'ESCROW_DEPOSIT',
+          status: escrow.status,
+          gateway: escrow.paymentGateway ?? null,
+          transactionRef: escrow.transactionRef ?? null,
+          occurredAt: escrow.fundedAt,
+          vendorName,
+        });
+      }
+      if (escrow?.releasedAt) {
+        entries.push({
+          id: `${order.id}-release`,
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          title: order.title,
+          amount: escrow.amount,
+          type: 'ESCROW_RELEASE',
+          status: escrow.status,
+          gateway: escrow.paymentGateway ?? null,
+          transactionRef: escrow.transactionRef ?? null,
+          occurredAt: escrow.releasedAt,
+          vendorName,
+        });
+      }
+      if (escrow?.refundedAt) {
+        entries.push({
+          id: `${order.id}-refund`,
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          title: order.title,
+          amount: escrow.amount,
+          type: 'REFUND',
+          status: escrow.status,
+          gateway: escrow.paymentGateway ?? null,
+          transactionRef: escrow.transactionRef ?? null,
+          occurredAt: escrow.refundedAt,
+          vendorName,
+        });
+      }
+    }
+
+    for (const sub of subscriptions) {
+      if (!sub.startedAt) continue;
+      entries.push({
+        id: sub.id,
+        orderId: '',
+        orderNumber: sub.merchantReference ?? sub.id,
+        title: `Membership: ${sub.plan.replace(/_/g, ' ').toLowerCase()}`,
+        amount: sub.amount / 100,
+        type: 'SUBSCRIPTION',
+        status: sub.status,
+        gateway: sub.paymentGateway ?? null,
+        transactionRef: sub.paymentReference ?? null,
+        occurredAt: sub.startedAt,
+        vendorName: null,
+      });
+    }
+
+    entries.sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime());
+
+    const totalSpent = orders
+      .filter((o) => o.status === OrderStatus.COMPLETED)
+      .reduce((sum, o) => sum + o.totalAmount, 0);
+    const inEscrow = orders
+      .filter(
+        (o) =>
+          o.escrowHolding?.status === EscrowStatus.HELD ||
+          o.status === OrderStatus.IN_PROGRESS ||
+          o.status === OrderStatus.DELIVERED ||
+          o.status === OrderStatus.UNDER_REVIEW ||
+          o.status === OrderStatus.DISPUTED,
+      )
+      .reduce((sum, o) => sum + (o.escrowHolding?.amount ?? o.totalAmount), 0);
+    const totalRefunded = orders
+      .filter(
+        (o) =>
+          o.escrowHolding?.status === EscrowStatus.REFUNDED_TO_CUSTOMER ||
+          o.status === OrderStatus.REFUNDED,
+      )
+      .reduce((sum, o) => sum + (o.escrowHolding?.amount ?? o.totalAmount), 0);
+    const pendingPaymentCount = orders.filter(
+      (o) => o.status === OrderStatus.PENDING_PAYMENT,
+    ).length;
+    const subscriptionSpend = subscriptions
+      .filter((s) => s.status === 'ACTIVE' || s.status === 'CANCELLED')
+      .reduce((sum, s) => sum + s.amount / 100, 0);
+
+    return {
+      summary: {
+        totalSpent,
+        inEscrow,
+        totalRefunded,
+        pendingPaymentCount,
+        subscriptionSpend,
+        ordersCount: orders.length,
+      },
+      entries: entries.slice(0, 50).map((e) => ({
+        ...e,
+        occurredAt: e.occurredAt.toISOString(),
+      })),
+      orders: orders.slice(0, 10).map((o) => ({
+        id: o.id,
+        orderNumber: o.orderNumber,
+        title: o.title,
+        totalAmount: o.totalAmount,
+        platformFee: o.platformFee,
+        status: o.status,
+        escrowStatus: o.escrowHolding?.status ?? null,
+        gateway: o.escrowHolding?.paymentGateway ?? null,
+        transactionRef: o.escrowHolding?.transactionRef ?? null,
+        fundedAt: o.escrowHolding?.fundedAt?.toISOString() ?? null,
+        releasedAt: o.escrowHolding?.releasedAt?.toISOString() ?? null,
+        refundedAt: o.escrowHolding?.refundedAt?.toISOString() ?? null,
+        vendorName: o.vendorProfile?.user?.name ?? null,
+        deadline: o.deadline.toISOString(),
+        createdAt: o.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  /**
+   * Platform-wide financial ledger (staff only).
+   *
+   * Powers the admin "Payouts & Ledger" page: every vendor wallet movement
+   * (escrow releases, withdrawals, refunds, platform fees), escrow holdings
+   * still locked, recent escrow movements with counterparties, and platform
+   * revenue / withdrawal totals for the KPI cards.
+   */
+  async getPlatformLedger() {
+    const [walletTransactions, escrowHoldings, recentEscrow, completedOrders] =
+      await Promise.all([
+        this.prisma.walletTransaction.findMany({
+          include: {
+            wallet: {
+              include: {
+                vendorProfile: {
+                  include: {
+                    user: { select: { name: true, email: true } },
+                  },
+                },
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        }),
+        this.prisma.escrowHolding.findMany({
+          where: { status: EscrowStatus.HELD },
+          select: { amount: true },
+        }),
+        this.prisma.escrowHolding.findMany({
+          where: {
+            status: {
+              in: [
+                EscrowStatus.RELEASED_TO_VENDOR,
+                EscrowStatus.REFUNDED_TO_CUSTOMER,
+              ],
+            },
+          },
+          include: {
+            order: {
+              select: {
+                orderNumber: true,
+                title: true,
+                platformFee: true,
+                totalAmount: true,
+                customer: { select: { name: true } },
+              },
+            },
+          },
+          orderBy: { updatedAt: 'desc' },
+          take: 20,
+        }),
+        this.prisma.order.findMany({
+          where: { status: OrderStatus.COMPLETED },
+          select: { totalAmount: true, platformFee: true },
+        }),
+      ]);
+
+    const totalEscrowHeld = escrowHoldings.reduce((sum, e) => sum + e.amount, 0);
+    const totalPlatformRevenue = completedOrders.reduce(
+      (sum, o) => sum + o.platformFee,
+      0,
+    );
+    const totalGMV = completedOrders.reduce((sum, o) => sum + o.totalAmount, 0);
+    const totalWithdrawn = walletTransactions
+      .filter((t) => t.type === WalletTransactionType.WITHDRAWAL)
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+    return {
+      summary: {
+        totalEscrowHeld,
+        totalPlatformRevenue,
+        totalGMV,
+        totalWithdrawn,
+        escrowHeldCount: escrowHoldings.length,
+        completedOrdersCount: completedOrders.length,
+      },
+      transactions: walletTransactions.map((tx) => ({
+        id: tx.id,
+        amount: tx.amount,
+        type: tx.type,
+        description: tx.description,
+        payoutMethod: tx.payoutMethod,
+        payoutAccount: tx.payoutAccount,
+        vendorName: tx.wallet?.vendorProfile?.user?.name ?? null,
+        vendorEmail: tx.wallet?.vendorProfile?.user?.email ?? null,
+        vendorUniversity: tx.wallet?.vendorProfile?.university ?? null,
+        createdAt: tx.createdAt.toISOString(),
+      })),
+      escrowMovements: recentEscrow.map((e) => ({
+        id: e.id,
+        orderNumber: e.order.orderNumber,
+        title: e.order.title,
+        amount: e.amount,
+        status: e.status,
+        gateway: e.paymentGateway,
+        customerName: e.order.customer?.name ?? null,
+        releasedAt: e.releasedAt?.toISOString() ?? null,
+        refundedAt: e.refundedAt?.toISOString() ?? null,
+        updatedAt: e.updatedAt.toISOString(),
+      })),
     };
   }
 }

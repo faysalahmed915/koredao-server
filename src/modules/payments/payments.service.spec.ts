@@ -13,6 +13,16 @@ describe('PaymentsService', () => {
   let prisma: {
     order: {
       findUnique: ReturnType<typeof vi.fn>;
+      findMany: ReturnType<typeof vi.fn>;
+    };
+    subscription: {
+      findMany: ReturnType<typeof vi.fn>;
+    };
+    walletTransaction: {
+      findMany: ReturnType<typeof vi.fn>;
+    };
+    escrowHolding: {
+      findMany: ReturnType<typeof vi.fn>;
     };
   };
   let config: {
@@ -26,6 +36,16 @@ describe('PaymentsService', () => {
     prisma = {
       order: {
         findUnique: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      subscription: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      walletTransaction: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      escrowHolding: {
+        findMany: vi.fn().mockResolvedValue([]),
       },
     };
 
@@ -221,4 +241,210 @@ describe('PaymentsService', () => {
       expect(res.funded).toBe(true);
     });
   });
+
+  describe('getPaymentHistory', () => {
+    it('should return empty ledger for a customer with no orders', async () => {
+      const res = await service.getPaymentHistory('cust-empty');
+
+      expect(res.summary.totalSpent).toBe(0);
+      expect(res.summary.inEscrow).toBe(0);
+      expect(res.entries).toEqual([]);
+      expect(res.orders).toEqual([]);
+    });
+
+    it('should build escrow deposit/release entries and summary totals', async () => {
+      const fundedAt = new Date('2026-01-10T10:00:00Z');
+      const releasedAt = new Date('2026-01-15T10:00:00Z');
+      prisma.order.findMany.mockResolvedValue([
+        {
+          id: 'ord-1',
+          orderNumber: 'KD-001',
+          title: 'Calculus Assignment',
+          totalAmount: 1500,
+          platformFee: 150,
+          status: OrderStatus.COMPLETED,
+          deadline: new Date('2026-01-20T00:00:00Z'),
+          createdAt: new Date('2026-01-05T00:00:00Z'),
+          escrowHolding: {
+            amount: 1500,
+            status: 'RELEASED_TO_VENDOR',
+            paymentGateway: 'AAMARPAY',
+            transactionRef: 'AAMAR_TRX_1',
+            fundedAt,
+            releasedAt,
+            refundedAt: null,
+          },
+          vendorProfile: { user: { name: 'Tanvir', image: null } },
+        },
+      ]);
+
+      const res = await service.getPaymentHistory('cust-1');
+
+      expect(res.summary.totalSpent).toBe(1500);
+      expect(res.summary.inEscrow).toBe(0);
+      expect(res.summary.ordersCount).toBe(1);
+      // deposit + release entries
+      expect(res.entries).toHaveLength(2);
+      expect(res.entries.map((e: any) => e.type).sort()).toEqual([
+        'ESCROW_DEPOSIT',
+        'ESCROW_RELEASE',
+      ]);
+      // Entries are sorted newest-first, so the release comes before the deposit.
+      expect(res.entries[0].type).toBe('ESCROW_RELEASE');
+      expect(res.entries[0].vendorName).toBe('Tanvir');
+      expect(res.orders[0].escrowStatus).toBe('RELEASED_TO_VENDOR');
+    });
+
+    it('should count in-flight escrow as inEscrow and include refunded totals', async () => {
+      prisma.order.findMany.mockResolvedValue([
+        {
+          id: 'ord-held',
+          orderNumber: 'KD-002',
+          title: 'Thesis Chapter',
+          totalAmount: 3000,
+          platformFee: 300,
+          status: OrderStatus.IN_PROGRESS,
+          deadline: new Date('2026-02-01T00:00:00Z'),
+          createdAt: new Date('2026-01-06T00:00:00Z'),
+          escrowHolding: {
+            amount: 3000,
+            status: 'HELD',
+            paymentGateway: 'PIPRAPAY',
+            transactionRef: 'PIPRA_TRX_9',
+            fundedAt: new Date('2026-01-07T00:00:00Z'),
+            releasedAt: null,
+            refundedAt: null,
+          },
+          vendorProfile: { user: { name: 'Fahim', image: null } },
+        },
+        {
+          id: 'ord-refunded',
+          orderNumber: 'KD-003',
+          title: 'Lab Report',
+          totalAmount: 800,
+          platformFee: 80,
+          status: OrderStatus.REFUNDED,
+          deadline: new Date('2026-01-30T00:00:00Z'),
+          createdAt: new Date('2026-01-04T00:00:00Z'),
+          escrowHolding: {
+            amount: 800,
+            status: 'REFUNDED_TO_CUSTOMER',
+            paymentGateway: 'MOCK_SANDBOX',
+            transactionRef: null,
+            fundedAt: new Date('2026-01-05T00:00:00Z'),
+            releasedAt: null,
+            refundedAt: new Date('2026-01-08T00:00:00Z'),
+          },
+          vendorProfile: { user: { name: 'Samira', image: null } },
+        },
+      ]);
+      prisma.subscription.findMany.mockResolvedValue([
+        {
+          id: 'sub-1',
+          plan: 'MEMBER_MONTHLY',
+          status: 'ACTIVE',
+          amount: 19900,
+          paymentGateway: 'sandbox',
+          paymentReference: 'SUB_TRX_1',
+          merchantReference: 'KD_SUB_1',
+          startedAt: new Date('2026-01-01T00:00:00Z'),
+        },
+      ]);
+
+      const res = await service.getPaymentHistory('cust-2');
+
+      expect(res.summary.inEscrow).toBe(3000);
+      expect(res.summary.totalRefunded).toBe(800);
+      expect(res.summary.subscriptionSpend).toBe(199);
+      const subEntry = res.entries.find((e: any) => e.type === 'SUBSCRIPTION');
+      expect(subEntry).toBeDefined();
+      expect(subEntry?.amount).toBe(199);
+    });
+  });
+
+  describe('getPlatformLedger', () => {
+    it('should aggregate escrow, revenue, GMV and withdrawal totals', async () => {
+      prisma.walletTransaction.findMany.mockResolvedValue([
+        {
+          id: 'tx-1',
+          amount: 1350,
+          type: 'ESCROW_RELEASE',
+          description: 'Escrow release for KD-001',
+          payoutMethod: null,
+          payoutAccount: null,
+          createdAt: new Date('2026-01-15T10:00:00Z'),
+          wallet: {
+            vendorProfile: {
+              university: 'BUET',
+              user: { name: 'Tanvir', email: 'tanvir@koredao.com' },
+            },
+          },
+        },
+        {
+          id: 'tx-2',
+          amount: -500,
+          type: 'WITHDRAWAL',
+          description: 'Withdrawal via BKASH to 01700000000',
+          payoutMethod: 'BKASH',
+          payoutAccount: '01700000000',
+          createdAt: new Date('2026-01-16T10:00:00Z'),
+          wallet: {
+            vendorProfile: {
+              university: 'DU',
+              user: { name: 'Fahim', email: 'fahim@koredao.com' },
+            },
+          },
+        },
+      ]);
+      prisma.escrowHolding.findMany
+        .mockResolvedValueOnce([{ amount: 2000 }]) // HELD query
+        .mockResolvedValueOnce([
+          {
+            id: 'esc-1',
+            amount: 1500,
+            status: 'RELEASED_TO_VENDOR',
+            paymentGateway: 'AAMARPAY',
+            releasedAt: new Date('2026-01-15T10:00:00Z'),
+            refundedAt: null,
+            updatedAt: new Date('2026-01-15T10:00:00Z'),
+            order: {
+              orderNumber: 'KD-001',
+              title: 'Calculus Assignment',
+              platformFee: 150,
+              totalAmount: 1500,
+              customer: { name: 'Lamia' },
+            },
+          },
+        ]);
+      prisma.order.findMany.mockResolvedValue([
+        { totalAmount: 5000, platformFee: 500 },
+        { totalAmount: 2500, platformFee: 250 },
+      ]);
+
+      const res = await service.getPlatformLedger();
+
+      expect(res.summary.totalEscrowHeld).toBe(2000);
+      expect(res.summary.escrowHeldCount).toBe(1);
+      expect(res.summary.totalPlatformRevenue).toBe(750);
+      expect(res.summary.totalGMV).toBe(7500);
+      expect(res.summary.totalWithdrawn).toBe(500);
+      expect(res.summary.completedOrdersCount).toBe(2);
+      expect(res.transactions).toHaveLength(2);
+      expect(res.transactions[0].vendorName).toBe('Tanvir');
+      expect(res.escrowMovements).toHaveLength(1);
+      expect(res.escrowMovements[0].customerName).toBe('Lamia');
+    });
+
+    it('should return zeroed totals when the platform has no activity', async () => {
+      const res = await service.getPlatformLedger();
+
+      expect(res.summary.totalEscrowHeld).toBe(0);
+      expect(res.summary.totalPlatformRevenue).toBe(0);
+      expect(res.summary.totalGMV).toBe(0);
+      expect(res.summary.totalWithdrawn).toBe(0);
+      expect(res.transactions).toEqual([]);
+      expect(res.escrowMovements).toEqual([]);
+    });
+  });
 });
+
