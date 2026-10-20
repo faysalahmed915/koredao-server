@@ -5,6 +5,7 @@ import {
   ConflictException,
   Logger,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../core/database/prisma.service.js';
 import { CreateOrderDto } from './dto/create-order.dto.js';
 import { SubmitDeliveryDto } from './dto/submit-delivery.dto.js';
@@ -182,6 +183,20 @@ export class OrdersService {
       throw new NotFoundException('Bid not found for this assignment');
     }
 
+    // Idempotency guard: if an order already exists for this assignment+bid,
+    // return it instead of creating a duplicate.
+    const existingOrder = await this.prisma.order.findFirst({
+      where: { assignmentId, bidId },
+      select: { id: true, orderNumber: true, status: true, escrowHolding: true },
+    });
+
+    if (existingOrder) {
+      this.logger.log(
+        `Idempotent createOrderFromBid: order ${existingOrder.id} already exists for assignmentId=${assignmentId} bidId=${bidId}. Returning existing order.`,
+      );
+      return this.findById(existingOrder.id, customerId);
+    }
+
     const totalAmount = bid.proposedPrice;
     const platformFee = Math.round(totalAmount * 0.10); // 10% fee
     const netVendorAmount = totalAmount - platformFee;
@@ -298,6 +313,15 @@ export class OrdersService {
       throw new ForbiddenException('You do not have permission to fund this order');
     }
 
+    if (order.status === OrderStatus.ESCROW_HELD) {
+      // Idempotent: escrow already funded (e.g. duplicate IPN callback / retry).
+      // Return current state instead of erroring or double-funding.
+      this.logger.log(
+        `Idempotent fundEscrow: orderId=${orderId} already ESCROW_HELD. Returning existing state.`,
+      );
+      return this.findById(orderId, order.customerId);
+    }
+
     if (order.status !== OrderStatus.PENDING_PAYMENT) {
       throw new ConflictException(`Order is already in '${order.status}' status`);
     }
@@ -389,6 +413,18 @@ export class OrdersService {
       throw new ForbiddenException('You do not have permission to accept this order');
     }
 
+    // Idempotency: if already completed or escrow already released, return
+    // existing state without mutating (safe against client retries and cron races).
+    if (
+      order.status === OrderStatus.COMPLETED ||
+      order.escrowHolding?.status === EscrowStatus.RELEASED_TO_VENDOR
+    ) {
+      this.logger.log(
+        `Idempotent acceptDelivery: orderId=${orderId} already ${order.status}. Returning existing state.`,
+      );
+      return this.findById(orderId, customerId);
+    }
+
     if (order.status !== OrderStatus.DELIVERED) {
       throw new ConflictException(`Order cannot be completed because it is in '${order.status}' status`);
     }
@@ -406,6 +442,19 @@ export class OrdersService {
     });
 
     if (!order) return;
+
+    // Idempotency guard: if the order is already completed or the escrow is
+    // already released, skip all mutation. Prevents double wallet crediting
+    // when acceptDelivery and the 72-hour cron race each other or retry.
+    if (
+      order.status === OrderStatus.COMPLETED ||
+      order.escrowHolding?.status === EscrowStatus.RELEASED_TO_VENDOR
+    ) {
+      this.logger.log(
+        `Idempotent completeOrderAndReleaseFunds: orderId=${orderId} already ${order.status} (escrow ${order.escrowHolding?.status}). Skipping wallet credit.`,
+      );
+      return this.findById(orderId, order.customerId);
+    }
 
     const now = new Date();
 
@@ -590,6 +639,20 @@ export class OrdersService {
 
     this.logger.log(`Dispute for orderId=${orderId} resolved with full refund to customer.`);
     return this.findById(orderId, order.customerId);
+  }
+
+  /**
+   * Scheduled 72-hour auto-release worker.
+   * Runs every hour to release escrow funds for delivered orders whose review
+   * window has elapsed. Idempotent: safe to run concurrently or retry.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async handle72HourAutoReleaseCron(): Promise<void> {
+    this.logger.log('Running scheduled 72-hour auto-release worker...');
+    const result = await this.process72HourAutoReleases();
+    this.logger.log(
+      `Scheduled 72-hour auto-release processed ${result.processedCount} orders.`,
+    );
   }
 
   /**

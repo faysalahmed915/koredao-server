@@ -12,6 +12,7 @@ describe('OrdersService', () => {
       create: ReturnType<typeof vi.fn>;
       findUnique: ReturnType<typeof vi.fn>;
       findMany: ReturnType<typeof vi.fn>;
+      findFirst: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
     };
     escrowHolding: {
@@ -48,6 +49,7 @@ describe('OrdersService', () => {
         create: vi.fn(),
         findUnique: vi.fn(),
         findMany: vi.fn(),
+        findFirst: vi.fn(),
         update: vi.fn(),
       },
       escrowHolding: {
@@ -143,6 +145,43 @@ describe('OrdersService', () => {
     });
   });
 
+  describe('createOrderFromBid', () => {
+    it('should be idempotent: return existing order instead of creating a duplicate', async () => {
+      const existingOrder = {
+        id: 'ord-1',
+        orderNumber: 'ORD-12345',
+        status: OrderStatus.PENDING_PAYMENT,
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vendor-1' },
+        escrowHolding: { id: 'eh-1', status: EscrowStatus.AWAITING_PAYMENT },
+      };
+      prisma.assignment.findUnique.mockResolvedValue({
+        id: 'asg-1',
+        customerId: 'cust-1',
+      });
+      prisma.bid.findUnique.mockResolvedValue({
+        id: 'bid-1',
+        assignmentId: 'asg-1',
+        vendorProfileId: 'vp-1',
+      });
+      prisma.order.findFirst.mockResolvedValue(existingOrder);
+      prisma.order.findUnique.mockResolvedValue(existingOrder);
+
+      const result = await service.create('cust-1', {
+        assignmentId: 'asg-1',
+        bidId: 'bid-1',
+      });
+
+      expect(result).toEqual(existingOrder);
+      expect(prisma.order.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { assignmentId: 'asg-1', bidId: 'bid-1' },
+        }),
+      );
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('fundEscrow', () => {
     it('should lock funds in escrow and update order status to ESCROW_HELD', async () => {
       const mockOrder = {
@@ -179,6 +218,25 @@ describe('OrdersService', () => {
       ).rejects.toThrow(ForbiddenException);
 
       expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it('should be idempotent: return existing state when escrow is already HELD', async () => {
+      const mockOrder = {
+        id: 'ord-1',
+        orderNumber: 'ORD-12345',
+        totalAmount: 1000,
+        status: OrderStatus.ESCROW_HELD,
+        customerId: 'cust-1',
+        vendorProfile: { userId: 'vendor-1' },
+        escrowHolding: { id: 'eh-1', status: EscrowStatus.HELD },
+      };
+      prisma.order.findUnique.mockResolvedValue(mockOrder);
+
+      const result = await service.fundEscrow('ord-1', 'AAMARPAY', 'TXN-AAMAR-123', 'cust-1');
+
+      expect(result).toBeTruthy();
+      expect(prisma.order.update).not.toHaveBeenCalled();
+      expect(prisma.escrowHolding.update).not.toHaveBeenCalled();
     });
   });
 
@@ -294,6 +352,26 @@ describe('OrdersService', () => {
           where: { vendorProfileId: 'vp-1' },
         }),
       );
+    });
+
+    it('should be idempotent: skip wallet credit when order is already COMPLETED', async () => {
+      const mockOrder = {
+        id: 'ord-1',
+        orderNumber: 'ORD-999',
+        customerId: 'cust-1',
+        vendorProfileId: 'vp-1',
+        netVendorAmount: 900,
+        status: OrderStatus.COMPLETED,
+        vendorProfile: { userId: 'vendor-1' },
+        escrowHolding: { id: 'eh-1', status: EscrowStatus.RELEASED_TO_VENDOR },
+      };
+      prisma.order.findUnique.mockResolvedValue(mockOrder);
+
+      const result = await service.acceptDelivery('cust-1', 'ord-1');
+
+      expect(result).toBeTruthy();
+      expect(prisma.escrowHolding.update).not.toHaveBeenCalled();
+      expect(prisma.vendorWallet.upsert).not.toHaveBeenCalled();
     });
   });
 

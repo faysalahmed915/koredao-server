@@ -1,9 +1,9 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+﻿import { Test, TestingModule } from '@nestjs/testing';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AssignmentsService } from './assignments.service.js';
 import { PrismaService } from '../../core/database/prisma.service.js';
-import { AssignmentStatus, AssignmentType, BidStatus, GigCategory, VerificationStatus } from '@prisma/client';
+import { AssignmentStatus, AssignmentType, BidStatus, GigCategory, OrderStatus, EscrowStatus, VerificationStatus } from '@prisma/client';
 
 describe('AssignmentsService', () => {
   let service: AssignmentsService;
@@ -21,6 +21,14 @@ describe('AssignmentsService', () => {
       findMany: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
       updateMany: ReturnType<typeof vi.fn>;
+    };
+    order: {
+      findFirst: ReturnType<typeof vi.fn>;
+      create: ReturnType<typeof vi.fn>;
+      findUnique: ReturnType<typeof vi.fn>;
+    };
+    escrowHolding: {
+      create: ReturnType<typeof vi.fn>;
     };
     vendorProfile: {
       findUnique: ReturnType<typeof vi.fn>;
@@ -44,10 +52,25 @@ describe('AssignmentsService', () => {
         update: vi.fn(),
         updateMany: vi.fn(),
       },
+      order: {
+        findFirst: vi.fn(),
+        create: vi.fn(),
+        findUnique: vi.fn(),
+      },
+      escrowHolding: {
+        create: vi.fn(),
+      },
       vendorProfile: {
         findUnique: vi.fn(),
       },
-      $transaction: vi.fn().mockImplementation((promises) => Promise.all(promises)),
+      // Supports both the array form ($transaction([...])) and the deferred
+      // callback form ($transaction(async (tx) => {...})).
+      $transaction: vi.fn().mockImplementation(async (arg: any) => {
+        if (Array.isArray(arg)) {
+          return Promise.all(arg);
+        }
+        return arg(prisma);
+      }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -204,30 +227,83 @@ describe('AssignmentsService', () => {
   });
 
   describe('acceptBid', () => {
-    it('should accept chosen bid, reject other bids, and transition assignment to ASSIGNED', async () => {
+    it('should accept chosen bid, reject other bids, create order + escrow atomically, and transition assignment to ASSIGNED', async () => {
       prisma.assignment.findUnique.mockResolvedValue({
         id: 'asg-1',
         customerId: 'cust-1',
         status: AssignmentStatus.OPEN,
       });
+      prisma.order.findFirst.mockResolvedValue(null);
       prisma.bid.findUnique.mockResolvedValue({
         id: 'bid-1',
         assignmentId: 'asg-1',
         status: BidStatus.PENDING,
+        vendorProfileId: 'vp-1',
+        proposedPrice: 800,
+        deliveryDays: 2,
       });
 
-      const mockUpdatedAssignment = { id: 'asg-1', status: AssignmentStatus.ASSIGNED };
-      const mockAcceptedBid = { id: 'bid-1', status: BidStatus.ACCEPTED };
+      const mockUpdatedAssignment = { id: 'asg-1', status: AssignmentStatus.ASSIGNED, acceptedBidId: 'bid-1' };
+      const mockAcceptedBid = { id: 'bid-1', status: BidStatus.ACCEPTED, assignmentId: 'asg-1' };
+      const mockOrder = { id: 'ord-1', orderNumber: 'ORD-12345678-ABCD', status: OrderStatus.PENDING_PAYMENT };
 
       prisma.assignment.update.mockResolvedValue(mockUpdatedAssignment);
       prisma.bid.update.mockResolvedValue(mockAcceptedBid);
       prisma.bid.updateMany.mockResolvedValue({ count: 2 });
+      prisma.order.create.mockResolvedValue(mockOrder);
+      prisma.escrowHolding.create.mockResolvedValue({ id: 'eh-1', orderId: 'ord-1', status: EscrowStatus.AWAITING_PAYMENT });
 
       const result = await service.acceptBid('cust-1', 'asg-1', 'bid-1');
 
       expect(result.assignment).toEqual(mockUpdatedAssignment);
       expect(result.acceptedBid).toEqual(mockAcceptedBid);
-      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(result.order).toEqual(mockOrder);
+      expect(result.idempotent).toBe(false);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      const txArg = prisma.$transaction.mock.calls[0][0];
+      expect(typeof txArg).toBe('function');
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            assignmentId: 'asg-1',
+            bidId: 'bid-1',
+            customerId: 'cust-1',
+            status: OrderStatus.PENDING_PAYMENT,
+          }),
+        }),
+      );
+      expect(prisma.escrowHolding.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: EscrowStatus.AWAITING_PAYMENT }),
+        }),
+      );
+    });
+
+    it('should be idempotent: return existing order without mutation on repeated acceptance', async () => {
+      prisma.assignment.findUnique.mockResolvedValue({
+        id: 'asg-1',
+        customerId: 'cust-1',
+        status: AssignmentStatus.ASSIGNED,
+      });
+      const existingOrder = {
+        id: 'ord-1',
+        orderNumber: 'ORD-12345678-ABCD',
+        status: OrderStatus.ESCROW_HELD,
+        customerId: 'cust-1',
+        vendorProfileId: 'vp-1',
+        totalAmount: 800,
+        escrowHolding: { id: 'eh-1', status: EscrowStatus.HELD },
+      };
+      prisma.order.findFirst.mockResolvedValue(existingOrder);
+
+      const result = await service.acceptBid('cust-1', 'asg-1', 'bid-1');
+
+      expect(result.idempotent).toBe(true);
+      expect(result.order).toEqual(existingOrder);
+      expect(result.assignment).toMatchObject({ id: 'asg-1', status: AssignmentStatus.ASSIGNED });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.assignment.update).not.toHaveBeenCalled();
+      expect(prisma.order.create).not.toHaveBeenCalled();
     });
 
     it('should throw ForbiddenException if caller is not the assignment owner', async () => {
@@ -241,5 +317,56 @@ describe('AssignmentsService', () => {
         ForbiddenException,
       );
     });
+
+    it('should throw ConflictException if assignment is not OPEN', async () => {
+      prisma.assignment.findUnique.mockResolvedValue({
+        id: 'asg-1',
+        customerId: 'cust-1',
+        status: AssignmentStatus.ASSIGNED,
+      });
+
+      await expect(service.acceptBid('cust-1', 'asg-1', 'bid-1')).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it('should throw ConflictException if bid is not PENDING', async () => {
+      prisma.assignment.findUnique.mockResolvedValue({
+        id: 'asg-1',
+        customerId: 'cust-1',
+        status: AssignmentStatus.OPEN,
+      });
+      prisma.order.findFirst.mockResolvedValue(null);
+      prisma.bid.findUnique.mockResolvedValue({
+        id: 'bid-1',
+        assignmentId: 'asg-1',
+        status: BidStatus.ACCEPTED,
+      });
+
+      await expect(service.acceptBid('cust-1', 'asg-1', 'bid-1')).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it('should throw NotFoundException if bid does not belong to assignment', async () => {
+      prisma.assignment.findUnique.mockResolvedValue({
+        id: 'asg-1',
+        customerId: 'cust-1',
+        status: AssignmentStatus.OPEN,
+      });
+      prisma.order.findFirst.mockResolvedValue(null);
+      prisma.bid.findUnique.mockResolvedValue({
+        id: 'bid-1',
+        assignmentId: 'other-asg',
+        status: BidStatus.PENDING,
+      });
+
+      await expect(service.acceptBid('cust-1', 'asg-1', 'bid-1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
   });
 });
+
+
+
