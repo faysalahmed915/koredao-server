@@ -7,6 +7,8 @@ import {
   IsInt,
   Min,
   Max,
+  MinLength,
+  MaxLength,
   IsArray,
   ValidateNested,
 } from 'class-validator';
@@ -52,6 +54,18 @@ export class HandwritingSampleInputDto {
 }
 
 export class CreateVendorApplicationDto {
+  @ApiProperty({
+    description: 'Verified real name of the applicant. Obligatory for vendors during verification.',
+    example: 'John Doe',
+    minLength: 2,
+    maxLength: 100,
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(100)
+  realName!: string;
+
   @ApiProperty({
     description: 'University / College / Institution name',
     example: 'University of Dhaka',

@@ -90,6 +90,7 @@ describe('ProfilesService', () => {
         university: 'University of Dhaka',
         department: 'CSE',
         idCardUrl: 'https://cdn.example.com/id.jpg',
+        realName: 'Test Vendor',
         handwritingSamples: [
           { sampleUrl: 'https://cdn.example.com/sample.jpg', style: HandwritingStyle.CURSIVE },
         ],
@@ -110,6 +111,7 @@ describe('ProfilesService', () => {
           university: 'BUET',
           department: 'EEE',
           idCardUrl: 'https://cdn.example.com/id.jpg',
+          realName: 'Re-applicant',
         }),
       ).rejects.toThrow(ConflictException);
     });

@@ -104,6 +104,16 @@ export class ProfilesService {
         },
       });
 
+      // Record the applicant's verified real name (vendor supplies it at application time).
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          realName: dto.realName.trim(),
+          realNameUpdatedAt: new Date(),
+          realNameUpdatedBy: userId,
+        },
+      });
+
       this.logger.log(`Vendor re-applied: userId=${userId}, profileId=${updated.id}`);
       return updated;
     }
@@ -136,6 +146,16 @@ export class ProfilesService {
       },
       include: {
         handwritingSamples: true,
+      },
+    });
+
+    // Record the applicant's verified real name (vendor supplies it at application time).
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        realName: dto.realName.trim(),
+        realNameUpdatedAt: new Date(),
+        realNameUpdatedBy: userId,
       },
     });
 

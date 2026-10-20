@@ -23,7 +23,7 @@ export class ReviewVendorApplicationDto {
 
   @ApiPropertyOptional({
     description:
-      "Verified real name of the user (only applied on approval). Set by the reviewing moderator after identity verification.",
+      "Verified real name of the user. Vendors supply it at application time; a reviewer may confirm or override it on approval.",
     example: 'John Doe',
     minLength: 2,
   })

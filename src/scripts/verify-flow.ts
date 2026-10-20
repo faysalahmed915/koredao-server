@@ -83,6 +83,7 @@ async function main() {
     const app = await profiles.applyAsVendor(vendorUser.id, {
       university: 'BUET', department: 'CSE', academicLevel: 'UNDERGRADUATE' as any,
       idCardUrl: 'https://cdn.koredao.test/id.jpg',
+      realName: 'Vendor Test User',
     } as any);
     check('Vendor application created as PENDING', (app as any).verificationStatus === 'PENDING');
 
