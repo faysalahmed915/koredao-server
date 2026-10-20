@@ -20,6 +20,8 @@ model User {
   customerOrders  Order[]          @relation("CustomerOrders")
   conversationsAsCustomer Conversation[] @relation("CustomerConversations")
   sentMessages            ChatMessage[]  @relation("SentMessages")
+  notifications           Notification[]
+  notificationPreferences NotificationPreference[]
 
   @@map("user")
 }

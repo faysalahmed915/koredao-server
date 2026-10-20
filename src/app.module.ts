@@ -43,6 +43,8 @@ import { ChatModule } from './modules/chat/chat.module.js';
 import { MatchingModule } from './modules/matching/matching.module.js';
 import { DashboardModule } from './modules/dashboard/dashboard.module.js';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module.js';
+import { NotificationsModule } from './modules/notifications/notifications.module.js';
+import { AnalyticsModule } from './modules/analytics/analytics.module.js';
 import { AuthGuard } from './modules/auth/auth.guard.js';
 import { RolesGuard } from './common/guards/roles.guard.js';
 
@@ -87,6 +89,8 @@ import { RolesGuard } from './common/guards/roles.guard.js';
     MatchingModule,
     DashboardModule,
     SubscriptionsModule,
+    NotificationsModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [

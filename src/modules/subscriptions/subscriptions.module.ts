@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { PrismaModule } from '../../core/database/prisma.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 import { SubscriptionsController } from './subscriptions.controller.js';
 import { SubscriptionsService } from './subscriptions.service.js';
 
@@ -10,7 +11,7 @@ import { SubscriptionsService } from './subscriptions.service.js';
  */
 @Global()
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, NotificationsModule],
   controllers: [SubscriptionsController],
   providers: [SubscriptionsService],
   exports: [SubscriptionsService],

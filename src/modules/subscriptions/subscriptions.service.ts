@@ -11,7 +11,8 @@ import { ConfigService } from '@nestjs/config';
 
 import { PrismaService } from '../../core/database/prisma.service.js';
 import { randomUUID } from 'node:crypto';
-import { SubscriptionPlan, SubscriptionStatus } from '@prisma/client';
+import { NotificationType, SubscriptionPlan, SubscriptionStatus } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import {
   MEMBERSHIP_PLANS,
   findMembershipPlan,
@@ -111,6 +112,7 @@ export class SubscriptionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -558,6 +560,13 @@ export class SubscriptionsService {
 
       if (result.count > 0 && subscription.userId) {
         this.invalidateMembership(subscription.userId);
+        // Membership is a paid moment the user must see confirmed.
+        await this.notifications.safeNotify(subscription.userId, {
+          type: NotificationType.MEMBERSHIP,
+          title: 'Membership activated',
+          body: `${definition.name} is active — posting jobs and other member benefits are unlocked.`,
+          link: '/membership',
+        });
       }
 
       return result.count > 0;

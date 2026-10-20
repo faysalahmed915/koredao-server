@@ -12,7 +12,8 @@ import { ReviewVendorApplicationDto } from './dto/review-vendor-application.dto.
 import { AddHandwritingSampleDto } from './dto/add-handwriting-sample.dto.js';
 import { UpdateCustomerProfileDto } from './dto/update-customer-profile.dto.js';
 import { QueryVendorsDto } from './dto/query-vendors.dto.js';
-import { UserRole, VerificationStatus } from '@prisma/client';
+import { NotificationType, UserRole, VerificationStatus } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 export const VENDOR_PUBLIC_SELECT = {
   id: true,
@@ -50,7 +51,10 @@ export const VENDOR_PUBLIC_SELECT = {
 export class ProfilesService {
   private readonly logger = new Logger(ProfilesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * Submits a new vendor application or re-submits a previously rejected application.
@@ -309,6 +313,15 @@ export class ProfilesService {
     this.logger.log(
       `Vendor application reviewed: profileId=${profileId}, status=${dto.status}, reviewer=${adminId}`,
     );
+    // Decision outcome for the applicant — they shouldn't have to poll /vendor/apply.
+    await this.notifications.safeNotify(profile.userId, {
+      type: NotificationType.VERIFICATION,
+      title: isApproved ? 'Helper application approved' : 'Helper application needs changes',
+      body: isApproved
+        ? 'Your helper profile is verified. You can now publish gigs and bid on assignments.'
+        : `Your application was not approved. ${dto.rejectionReason ?? 'Please review the requirements and re-submit.'}`,
+      link: '/vendor/apply',
+    });
 
     return updatedProfile;
   }

@@ -10,7 +10,8 @@ import { CreateAssignmentDto } from './dto/create-assignment.dto.js';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto.js';
 import { CreateBidDto } from './dto/create-bid.dto.js';
 import { QueryAssignmentsDto } from './dto/query-assignments.dto.js';
-import { AssignmentStatus, BidStatus, OrderStatus, EscrowStatus, VerificationStatus } from '@prisma/client';
+import { AssignmentStatus, BidStatus, NotificationType, OrderStatus, EscrowStatus, VerificationStatus } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 export const ASSIGNMENT_PUBLIC_INCLUDE = {
   customer: {
@@ -57,7 +58,10 @@ export const BID_VENDOR_INCLUDE = {
 export class AssignmentsService {
   private readonly logger = new Logger(AssignmentsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * Business rules for job posting (students / customers only):
@@ -289,6 +293,13 @@ export class AssignmentsService {
     this.logger.log(
       `Bid placed by vendorProfileId=${vendorProfile.id} on assignmentId=${assignmentId} for ৳${dto.proposedPrice}`,
     );
+    // Tell the posting customer a new proposal is waiting for review.
+    await this.notifications.safeNotify(assignment.customerId, {
+      type: NotificationType.BID,
+      title: 'New proposal received',
+      body: `A helper proposed ৳${dto.proposedPrice} for "${assignment.title}" (${dto.deliveryDays}-day delivery).`,
+      link: `/assignments/${assignmentId}`,
+    });
 
     return bid;
   }

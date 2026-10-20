@@ -3,6 +3,7 @@ import { ConflictException, ForbiddenException, NotFoundException } from '@nestj
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AssignmentsService } from './assignments.service.js';
 import { PrismaService } from '../../core/database/prisma.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { AssignmentStatus, AssignmentType, BidStatus, GigCategory, OrderStatus, EscrowStatus, VerificationStatus } from '@prisma/client';
 
 describe('AssignmentsService', () => {
@@ -79,6 +80,10 @@ describe('AssignmentsService', () => {
         {
           provide: PrismaService,
           useValue: prisma,
+        },
+        {
+          provide: NotificationsService,
+          useValue: { safeNotify: vi.fn().mockResolvedValue(null) },
         },
       ],
     }).compile();

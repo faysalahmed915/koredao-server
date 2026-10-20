@@ -113,4 +113,23 @@ enum CheckpointStatus {
   ACCEPTED
   REVISION_REQUESTED
 }
-
+
+/// Category of an in-app notification. Used for filtering in the notification
+/// centre and for choosing an icon on the client.
+enum NotificationType {
+  /// Order lifecycle events (created, accepted, delivered, completed, dispute).
+  ORDER
+  /// Escrow movements (funded, released, refunded).
+  ESCROW
+  /// Payout / withdrawal events for helpers.
+  PAYOUT
+  /// New proposals on an assignment post.
+  BID
+  /// Vendor verification decisions.
+  VERIFICATION
+  /// Membership subscription events (activated, renewed).
+  MEMBERSHIP
+  /// Account & platform announcements.
+  SYSTEM
+}
+

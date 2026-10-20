@@ -16,9 +16,11 @@ import { RequestWithdrawalDto } from './dto/request-withdrawal.dto.js';
 import {
   AssignmentStatus,
   EscrowStatus,
+  NotificationType,
   OrderStatus,
   WalletTransactionType,
 } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 export const ORDER_DETAIL_INCLUDE = {
   customer: {
@@ -71,7 +73,10 @@ export const ORDER_DETAIL_INCLUDE = {
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * Initializes a new order from a Gig purchase or accepted Assignment bid.
@@ -155,6 +160,13 @@ export class OrdersService {
     });
 
     this.logger.log(`Order created from Gig: orderId=${order.id}, totalAmount=${totalAmount} BDT`);
+    // Notify the helper that work is waiting (payment not required yet).
+    await this.notifications.safeNotify(gig.vendorProfile.userId, {
+      type: NotificationType.ORDER,
+      title: 'New order received',
+      body: `A customer ordered "${selectedPkg.name}" for ${gig.title} — ৳${totalAmount}.`,
+      link: `/orders/${order.id}`,
+    });
     return this.findById(order.id, customerId);
   }
 
@@ -241,6 +253,12 @@ export class OrdersService {
     });
 
     this.logger.log(`Order created from Bid: orderId=${order.id}, totalAmount=${totalAmount} BDT`);
+    await this.notifications.safeNotify(bid.vendorProfile.userId, {
+      type: NotificationType.ORDER,
+      title: 'Your proposal was accepted',
+      body: `An order for "${assignment.title}" was created from your proposal — ৳${totalAmount}.`,
+      link: `/orders/${order.id}`,
+    });
     return this.findById(order.id, customerId);
   }
 
@@ -280,6 +298,12 @@ export class OrdersService {
     });
 
     this.logger.log(`Vendor accepted orderId=${orderId} (orderNumber=${order.orderNumber})`);
+    await this.notifications.safeNotify(order.customerId, {
+      type: NotificationType.ORDER,
+      title: 'Helper accepted your order',
+      body: `${order.orderNumber} has been accepted. Fund escrow to start the work.`,
+      link: `/orders/${order.id}`,
+    });
     return this.findById(updated.id, vendorUserId);
   }
 
@@ -345,6 +369,21 @@ export class OrdersService {
     ]);
 
     this.logger.log(`Escrow funded for orderId=${orderId}, amount=${order.totalAmount} BDT via ${gateway}`);
+    // Money moment: both parties get a durable record of the escrow lock.
+    await Promise.all([
+      this.notifications.safeNotify(order.vendorProfile.userId, {
+        type: NotificationType.ESCROW,
+        title: 'Escrow funded — you can start work',
+        body: `Payment confirmed for ${order.orderNumber} (৳${order.totalAmount}).`,
+        link: `/orders/${order.id}`,
+      }),
+      this.notifications.safeNotify(order.customerId, {
+        type: NotificationType.ESCROW,
+        title: 'Payment locked in escrow',
+        body: `৳${order.totalAmount} for ${order.orderNumber} is held safely until you approve the delivery.`,
+        link: `/orders/${order.id}`,
+      }),
+    ]);
     return this.findById(orderId, order.customerId);
   }
 
@@ -392,6 +431,12 @@ export class OrdersService {
     this.logger.log(
       `Deliverable submitted for orderId=${orderId}. 72-hour auto-release timer set to ${autoReleaseAt.toISOString()}`,
     );
+    await this.notifications.safeNotify(order.customerId, {
+      type: NotificationType.ORDER,
+      title: 'Delivery submitted',
+      body: `Your order ${order.orderNumber} is ready for review. Auto-release in 72 hours.`,
+      link: `/orders/${order.id}`,
+    });
 
     return updated;
   }
@@ -518,6 +563,20 @@ export class OrdersService {
     });
 
     this.logger.log(`Order #${order.orderNumber} completed. Credited ৳${order.netVendorAmount} to helper wallet.`);
+    await Promise.all([
+      this.notifications.safeNotify(order.vendorProfile.userId, {
+        type: NotificationType.ESCROW,
+        title: 'Payout released',
+        body: `৳${order.netVendorAmount} was credited to your wallet for ${order.orderNumber}.`,
+        link: '/vendor/wallet',
+      }),
+      this.notifications.safeNotify(order.customerId, {
+        type: NotificationType.ORDER,
+        title: 'Order completed',
+        body: `Delivery for ${order.orderNumber} was approved and escrow released.`,
+        link: `/orders/${order.id}`,
+      }),
+    ]);
     return this.findById(orderId, order.customerId);
   }
 
@@ -527,6 +586,7 @@ export class OrdersService {
   async requestRevision(customerId: string, orderId: string, dto: RequestRevisionDto) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
+      include: { vendorProfile: { select: { userId: true } } },
     });
 
     if (!order) {
@@ -559,6 +619,12 @@ export class OrdersService {
     });
 
     this.logger.log(`Revision requested for orderId=${orderId} (round ${updated.usedRevisions}/${updated.maxRevisions})`);
+    await this.notifications.safeNotify(order.vendorProfile.userId, {
+      type: NotificationType.ORDER,
+      title: 'Revision requested',
+      body: `The customer requested revision ${updated.usedRevisions}/${updated.maxRevisions} for ${order.orderNumber}.`,
+      link: `/orders/${order.id}`,
+    });
     return updated;
   }
 
@@ -593,6 +659,14 @@ export class OrdersService {
     });
 
     this.logger.log(`Dispute raised on orderId=${orderId} by userId=${userId}: ${dto.disputeReason}`);
+    // Tell the OTHER party — the actor already knows they raised it.
+    const counterpartId = isCustomer ? order.vendorProfile.userId : order.customerId;
+    await this.notifications.safeNotify(counterpartId, {
+      type: NotificationType.ORDER,
+      title: 'Dispute opened on your order',
+      body: `${order.orderNumber} was moved to dispute. Our moderators will review it shortly.`,
+      link: `/orders/${order.id}`,
+    });
     return updated;
   }
 
@@ -638,6 +712,20 @@ export class OrdersService {
     ]);
 
     this.logger.log(`Dispute for orderId=${orderId} resolved with full refund to customer.`);
+    await Promise.all([
+      this.notifications.safeNotify(order.customerId, {
+        type: NotificationType.ESCROW,
+        title: 'Dispute resolved — you were refunded',
+        body: `Escrow for ${order.orderNumber} was refunded to you.${dto.resolutionNotes ? ` Note: ${dto.resolutionNotes}` : ''}`,
+        link: `/orders/${order.id}`,
+      }),
+      this.notifications.safeNotify(order.vendorProfile.userId, {
+        type: NotificationType.ORDER,
+        title: 'Dispute resolved',
+        body: `The dispute on ${order.orderNumber} was resolved in the customer's favour and escrow was refunded.`,
+        link: `/orders/${order.id}`,
+      }),
+    ]);
     return this.findById(orderId, order.customerId);
   }
 
@@ -785,7 +873,7 @@ export class OrdersService {
       throw new ConflictException(`Insufficient wallet balance. Available: ৳${wallet?.balance ?? 0}`);
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const updatedWallet = await tx.vendorWallet.update({
         where: { id: wallet.id },
         data: {
@@ -814,5 +902,15 @@ export class OrdersService {
         transaction,
       };
     });
+
+    // Receipt for the helper's own records (fires after the tx commits).
+    await this.notifications.safeNotify(vendorUserId, {
+      type: NotificationType.PAYOUT,
+      title: 'Withdrawal requested',
+      body: `৳${dto.amount} via ${dto.payoutMethod} to ${dto.payoutAccount} was deducted from your wallet.`,
+      link: '/vendor/wallet',
+    });
+
+    return result;
   }
 }

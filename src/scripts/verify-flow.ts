@@ -47,9 +47,12 @@ async function main() {
   const prisma = new PrismaClient({ adapter });
   await prisma.$connect();
 
-  const assignments = new AssignmentsService(prisma as any);
-  const profiles = new ProfilesService(prisma as any);
-  const orders = new OrdersService(prisma as any);
+  // Minimal NotificationsService stand-in: the flow script has no notification
+  // centre to write to, and safeNotify must never throw anyway.
+  const notificationsStub = { safeNotify: async () => null } as any;
+  const assignments = new AssignmentsService(prisma as any, notificationsStub);
+  const profiles = new ProfilesService(prisma as any, notificationsStub);
+  const orders = new OrdersService(prisma as any, notificationsStub);
   const chat = new ChatService(prisma as any);
   const milestones = new MilestonesService(prisma as any);
 

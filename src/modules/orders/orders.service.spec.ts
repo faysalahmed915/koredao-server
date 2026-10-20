@@ -3,6 +3,7 @@ import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { OrdersService } from './orders.service.js';
 import { PrismaService } from '../../core/database/prisma.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { EscrowStatus, OrderStatus } from '@prisma/client';
 
 describe('OrdersService', () => {
@@ -91,6 +92,10 @@ describe('OrdersService', () => {
         {
           provide: PrismaService,
           useValue: prisma,
+        },
+        {
+          provide: NotificationsService,
+          useValue: { safeNotify: vi.fn().mockResolvedValue(null) },
         },
       ],
     }).compile();
@@ -380,6 +385,7 @@ describe('OrdersService', () => {
       prisma.order.findUnique.mockResolvedValue({
         id: 'ord-1',
         customerId: 'cust-1',
+        vendorProfile: { userId: 'vendor-1' },
         status: OrderStatus.DELIVERED,
         maxRevisions: 2,
         usedRevisions: 0,
@@ -388,6 +394,7 @@ describe('OrdersService', () => {
         id: 'ord-1',
         status: OrderStatus.IN_PROGRESS,
         usedRevisions: 1,
+        maxRevisions: 2,
       });
 
       const result = await service.requestRevision('cust-1', 'ord-1', {
