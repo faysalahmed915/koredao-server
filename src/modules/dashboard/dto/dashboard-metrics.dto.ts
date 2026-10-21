@@ -1,7 +1,12 @@
 /**
  * Membership snapshot attached to every dashboard, so the UI can render member
- * badges, upgrade prompts and renewal countdowns without a second request.
+ * badges, renewal countdowns and upgrade prompts without a second request.
  */
+import type {
+  ModerationRequest,
+  ModeratorAdminRequest,
+} from '@prisma/client';
+
 export interface MembershipSnapshot {
   isMember: boolean;
   plan: string | null;
@@ -127,6 +132,8 @@ export interface AdminDashboardMetrics {
     pendingVerificationsCount: number;
     disputedOrdersCount: number;
     safetyAlertsCount: number;
+    pendingHelpRequestsCount: number;
+    pendingAdminEscalationsCount: number;
   };
   pendingVerifications: Array<{
     id: string;
@@ -138,6 +145,30 @@ export interface AdminDashboardMetrics {
     idCardUrl?: string | null;
     createdAt: Date;
   }>;
+  /** Moderator+ only: pending help requests from customers/vendors. */
+  moderationHelpRequests: Array<{
+    id: string;
+    orderNumber: string;
+    orderTitle: string;
+    orderStatus: string;
+    requestedById: string;
+    requestedByName: string;
+    requestedByRole: string;
+    reason: string;
+    createdAt: Date;
+  }>;
+  /** Admin only: pending moderator-to-admin escalation requests. */
+  moderatorAdminEscalations: Array<{
+    id: string;
+    orderNumber?: string | null;
+    orderTitle?: string | null;
+    requestedById: string;
+    requestedByName: string;
+    requestedByRole: string;
+    reason: string;
+    createdAt: Date;
+  }>;
+  /** Admin only: all wallet transactions. Moderators must NOT see this. */
   recentTransactions: Array<{
     id: string;
     amount: number;

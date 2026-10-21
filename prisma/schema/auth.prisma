@@ -20,6 +20,10 @@ model User {
   customerOrders  Order[]          @relation("CustomerOrders")
   conversationsAsCustomer Conversation[] @relation("CustomerConversations")
   sentMessages            ChatMessage[]  @relation("SentMessages")
+  moderationRequestsAsRequester ModerationRequest[] @relation("ModerationRequestRequestedBy")
+  moderationRequestsAsModerator ModerationRequest[] @relation("ModerationRequestModerator")
+  moderatorAdminRequestsAsRequester ModeratorAdminRequest[] @relation("ModeratorAdminRequestRequestedBy")
+  moderatorAdminRequestsAsAdmin ModeratorAdminRequest[] @relation("ModeratorAdminRequestAdmin")
 
   @@map("user")
 }
