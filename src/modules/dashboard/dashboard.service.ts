@@ -99,7 +99,7 @@ export class DashboardService {
       },
       stats: customer.stats,
       recentOrders: customer.recentOrders,
-      recentAssignments: customer.recentAssignments,
+      allAssignments: customer.allAssignments,
       recommendedGigs: customer.recommendedGigs,
     };
   }
@@ -129,7 +129,6 @@ export class DashboardService {
         this.prisma.assignment.findMany({
           where: { customerId: userId },
           orderBy: { createdAt: 'desc' },
-          take: 10,
         }),
         this.prisma.conversation.findMany({
           where: { customerId: userId },
@@ -202,6 +201,7 @@ export class DashboardService {
         completedOrdersCount,
         totalSpent,
         openAssignmentsCount,
+        totalAssignmentsPosted: assignments.length,
         totalBidsReceived,
         unreadMessagesCount,
       },
@@ -216,7 +216,7 @@ export class DashboardService {
         vendorUniversity: o.vendorProfile.university,
         vendorImage: o.vendorProfile.user.image,
       })),
-      recentAssignments: assignments.slice(0, 5).map((a) => ({
+      allAssignments: assignments.map((a) => ({
         id: a.id,
         title: a.title,
         subject: a.subject,
@@ -271,12 +271,13 @@ export class DashboardService {
           completedOrdersCount: 0,
           activeBidsCount: 0,
           acceptedBidsCount: 0,
+          totalBidsApplied: 0,
           rating: 0,
           totalReviews: 0,
           unreadMessagesCount: 0,
         },
         urgentOrders: [],
-        recentBids: [],
+        allBids: [],
         myGigs: [],
       };
     }
@@ -298,7 +299,6 @@ export class DashboardService {
           assignment: { select: { title: true } },
         },
         orderBy: { createdAt: 'desc' },
-        take: 10,
       }),
       this.prisma.gig.findMany({
         where: { vendorProfileId: vendorProfile.id },
@@ -379,12 +379,13 @@ export class DashboardService {
         completedOrdersCount,
         activeBidsCount,
         acceptedBidsCount,
+        totalBidsApplied: bids.length,
         rating: vendorProfile.rating,
         totalReviews: vendorProfile.totalReviews,
         unreadMessagesCount,
       },
       urgentOrders,
-      recentBids: bids.slice(0, 5).map((b) => ({
+      allBids: bids.map((b) => ({
         id: b.id,
         assignmentId: b.assignmentId,
         assignmentTitle: b.assignment.title,
