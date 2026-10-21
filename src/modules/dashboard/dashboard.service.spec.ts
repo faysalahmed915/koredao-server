@@ -201,10 +201,11 @@ describe('DashboardService', () => {
         expect(res.stats.activeOrdersCount).toBe(1);
         expect(res.stats.completedOrdersCount).toBe(1);
         expect(res.stats.openAssignmentsCount).toBe(1);
+        expect(res.stats.totalAssignmentsPosted).toBe(1);
         expect(res.stats.totalBidsReceived).toBe(3);
         expect(res.stats.unreadMessagesCount).toBe(2);
         expect(res.recentOrders.length).toBe(2);
-        expect(res.recentAssignments.length).toBe(1);
+        expect(res.allAssignments.length).toBe(1);
         expect(res.recommendedGigs.length).toBe(1);
       }
     });
@@ -322,8 +323,9 @@ describe('DashboardService', () => {
         expect(res.stats.pendingEscrowBalance).toBe(2400);
         expect(res.stats.inProgressOrdersCount).toBe(1);
         expect(res.stats.activeBidsCount).toBe(1);
+        expect(res.stats.totalBidsApplied).toBe(1);
         expect(res.urgentOrders.length).toBe(1);
-        expect(res.recentBids.length).toBe(1);
+        expect(res.allBids.length).toBe(1);
         expect(res.myGigs.length).toBe(1);
       }
     });

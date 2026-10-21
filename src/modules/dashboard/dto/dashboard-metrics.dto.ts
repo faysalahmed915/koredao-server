@@ -22,6 +22,7 @@ export interface CustomerDashboardMetrics {
     completedOrdersCount: number;
     totalSpent: number;
     openAssignmentsCount: number;
+    totalAssignmentsPosted: number;
     totalBidsReceived: number;
     unreadMessagesCount: number;
   };
@@ -36,7 +37,7 @@ export interface CustomerDashboardMetrics {
     vendorUniversity: string;
     vendorImage?: string | null;
   }>;
-  recentAssignments: Array<{
+  allAssignments: Array<{
     id: string;
     title: string;
     subject: string;
@@ -75,6 +76,7 @@ export interface VendorDashboardMetrics {
     completedOrdersCount: number;
     activeBidsCount: number;
     acceptedBidsCount: number;
+    totalBidsApplied: number;
     rating: number;
     totalReviews: number;
     unreadMessagesCount: number;
@@ -90,7 +92,7 @@ export interface VendorDashboardMetrics {
     customerUniversity?: string | null;
     checkpointsCount: number;
   }>;
-  recentBids: Array<{
+  allBids: Array<{
     id: string;
     assignmentId: string;
     assignmentTitle: string;
@@ -172,7 +174,7 @@ export interface MemberDashboardMetrics {
   };
   stats: CustomerDashboardMetrics['stats'];
   recentOrders: CustomerDashboardMetrics['recentOrders'];
-  recentAssignments: CustomerDashboardMetrics['recentAssignments'];
+  allAssignments: CustomerDashboardMetrics['allAssignments'];
   recommendedGigs: CustomerDashboardMetrics['recommendedGigs'];
 }
 
