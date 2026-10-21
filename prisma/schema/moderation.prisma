@@ -1,0 +1,55 @@
+model ModerationRequest {
+  id             String          @id @default(cuid())
+  orderId        String
+  order          Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  requestedById  String
+  requestedBy    User            @relation("ModerationRequestRequestedBy", fields: [requestedById], references: [id], onDelete: Cascade)
+  reason         String          @db.Text
+  status         ModerationRequestStatus @default(PENDING)
+  moderatorId    String?
+  moderator      User?           @relation("ModerationRequestModerator", fields: [moderatorId], references: [id], onDelete: SetNull)
+  moderatorNote  String?         @db.Text
+  resolvedAt     DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([orderId])
+  @@index([requestedById])
+  @@index([status])
+  @@index([moderatorId])
+  @@map("moderation_request")
+}
+
+model ModeratorAdminRequest {
+  id             String                 @id @default(cuid())
+  orderId        String?
+  order          Order?               @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  requestedById  String
+  requestedBy    User                 @relation("ModeratorAdminRequestRequestedBy", fields: [requestedById], references: [id], onDelete: Cascade)
+  reason         String               @db.Text
+  status         ModeratorAdminRequestStatus @default(PENDING)
+  adminId        String?
+  admin          User?                @relation("ModeratorAdminRequestAdmin", fields: [adminId], references: [id], onDelete: SetNull)
+  adminNote      String?              @db.Text
+  resolvedAt     DateTime?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  @@index([orderId])
+  @@index([requestedById])
+  @@index([status])
+  @@index([adminId])
+  @@map("moderator_admin_request")
+}
+
+enum ModerationRequestStatus {
+  PENDING
+  RESOLVED
+  DISMISSED
+}
+
+enum ModeratorAdminRequestStatus {
+  PENDING
+  RESOLVED
+  DISMISSED
+}

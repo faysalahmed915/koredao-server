@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../core/database/prisma.service.js';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service.js';
 import {
@@ -16,6 +16,8 @@ import type {
   MembershipSnapshot,
 } from './dto/dashboard-metrics.dto.js';
 
+import { ModerationService } from '../moderation/moderation.service.js';
+
 @Injectable()
 export class DashboardService {
   private readonly logger = new Logger(DashboardService.name);
@@ -23,6 +25,7 @@ export class DashboardService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly subscriptions: SubscriptionsService,
+    private readonly moderation: ModerationService,
   ) {}
 
   /**
@@ -410,6 +413,8 @@ export class DashboardService {
    * Aggregates Super Admin / Moderator Command Center metrics
    */
   private async getAdminMetrics(adminRole: UserRole = UserRole.ADMIN): Promise<AdminDashboardMetrics> {
+    const isModeratorOnly = adminRole === UserRole.MODERATOR;
+
     const [
       totalUsers,
       totalVendors,
@@ -422,7 +427,8 @@ export class DashboardService {
       pendingVendors,
       disputedOrders,
       safetyAlertsCount,
-      recentTransactions,
+      pendingHelpRequests,
+      pendingAdminEscalations,
     ] = await Promise.all([
       this.prisma.user.count(),
       this.prisma.vendorProfile.count({
@@ -456,15 +462,24 @@ export class DashboardService {
       this.prisma.chatMessage.count({
         where: { hasSafetyWarning: true },
       }),
-      this.prisma.walletTransaction.findMany({
-        orderBy: { createdAt: 'desc' },
-        take: 6,
-      }),
+      this.moderation.getPendingHelpRequests(),
+      // Only ADMIN/SUPER_ADMIN can see moderator-to-admin escalations. Moderators cannot.
+      isModeratorOnly
+        ? Promise.resolve([])
+        : this.moderation.getPendingAdminEscalations(),
     ]);
 
     const totalEscrowHeld = escrowHoldings.reduce((sum, e) => sum + e.amount, 0);
     const totalPlatformRevenue = completedOrders.reduce((sum, o) => sum + o.platformFee, 0);
     const totalGMV = completedOrders.reduce((sum, o) => sum + o.totalAmount, 0);
+
+    // Moderators must NOT see payment/transaction data.
+    const recentTransactions = isModeratorOnly
+      ? []
+      : await this.prisma.walletTransaction.findMany({
+          orderBy: { createdAt: 'desc' },
+          take: 6,
+        });
 
     return {
       role: adminRole as 'ADMIN' | 'SUPER_ADMIN' | 'MODERATOR',
@@ -481,6 +496,8 @@ export class DashboardService {
         pendingVerificationsCount: pendingVendors.length,
         disputedOrdersCount: disputedOrders.length,
         safetyAlertsCount,
+        pendingHelpRequestsCount: pendingHelpRequests.length,
+        pendingAdminEscalationsCount: pendingAdminEscalations.length,
       },
       pendingVerifications: pendingVendors.map((pv) => ({
         id: pv.id,
@@ -491,6 +508,27 @@ export class DashboardService {
         department: pv.department,
         idCardUrl: pv.idCardUrl,
         createdAt: pv.createdAt,
+      })),
+      moderationHelpRequests: pendingHelpRequests.map((r) => ({
+        id: r.id,
+        orderNumber: r.orderNumber,
+        orderTitle: r.orderTitle,
+        orderStatus: r.orderStatus,
+        requestedById: r.requestedById,
+        requestedByName: r.requestedByName,
+        requestedByRole: r.requestedByRole,
+        reason: r.reason,
+        createdAt: r.createdAt,
+      })),
+      moderatorAdminEscalations: pendingAdminEscalations.map((r) => ({
+        id: r.id,
+        orderNumber: r.orderNumber,
+        orderTitle: r.orderTitle,
+        requestedById: r.requestedById,
+        requestedByName: r.requestedByName,
+        requestedByRole: r.requestedByRole,
+        reason: r.reason,
+        createdAt: r.createdAt,
       })),
       recentTransactions: recentTransactions.map((tx) => ({
         id: tx.id,

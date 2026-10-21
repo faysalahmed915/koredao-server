@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DashboardService } from './dashboard.service.js';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service.js';
 import { PrismaService } from '../../core/database/prisma.service.js';
+import { ModerationService } from '../moderation/moderation.service.js';
 import { UserRole, OrderStatus, EscrowStatus, VerificationStatus } from '@prisma/client';
 
 describe('DashboardService', () => {
@@ -53,6 +54,11 @@ describe('DashboardService', () => {
     isActiveMember: ReturnType<typeof vi.fn>;
   };
 
+  let moderation: {
+    getPendingHelpRequests: ReturnType<typeof vi.fn>;
+    getPendingAdminEscalations: ReturnType<typeof vi.fn>;
+  };
+
   beforeEach(async () => {
     subscriptions = {
       // Default: no caller holds a membership, so the plain role-specific
@@ -69,6 +75,11 @@ describe('DashboardService', () => {
         subscriptionId: null,
       }),
       isActiveMember: vi.fn().mockResolvedValue(false),
+    };
+
+    moderation = {
+      getPendingHelpRequests: vi.fn().mockResolvedValue([]),
+      getPendingAdminEscalations: vi.fn().mockResolvedValue([]),
     };
 
     prisma = {
@@ -119,6 +130,10 @@ describe('DashboardService', () => {
         {
           provide: SubscriptionsService,
           useValue: subscriptions,
+        },
+        {
+          provide: ModerationService,
+          useValue: moderation,
         },
       ],
     }).compile();
@@ -430,6 +445,10 @@ describe('DashboardService', () => {
         expect(res.pendingVerifications.length).toBe(1);
         expect(res.disputedOrders.length).toBe(1);
         expect(res.recentTransactions.length).toBe(1);
+        expect(res.stats.pendingHelpRequestsCount).toBe(0);
+        expect(res.stats.pendingAdminEscalationsCount).toBe(0);
+        expect(res.moderationHelpRequests.length).toBe(0);
+        expect(res.moderatorAdminEscalations.length).toBe(0);
       }
 
       const resSuper = await service.getMetrics('admin-1', UserRole.SUPER_ADMIN);
