@@ -2,7 +2,7 @@ import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
-import { APP_GUARD, APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_GUARD, APP_FILTER, APP_INTERCEPTOR, Reflector } from '@nestjs/core';
 
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
@@ -93,6 +93,7 @@ import { RolesGuard } from './common/guards/roles.guard.js';
   controllers: [AppController],
   providers: [
     AppService,
+    Reflector,
     // Rate limiter guard active across all endpoints
     {
       provide: APP_GUARD,
