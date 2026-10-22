@@ -1,22 +1,30 @@
 model ModerationRequest {
-  id             String          @id @default(cuid())
-  orderId        String
-  order          Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  requestedById  String
-  requestedBy    User            @relation("ModerationRequestRequestedBy", fields: [requestedById], references: [id], onDelete: Cascade)
-  reason         String          @db.Text
-  status         ModerationRequestStatus @default(PENDING)
-  moderatorId    String?
-  moderator      User?           @relation("ModerationRequestModerator", fields: [moderatorId], references: [id], onDelete: SetNull)
-  moderatorNote  String?         @db.Text
-  resolvedAt     DateTime?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  id                 String          @id @default(cuid())
+  orderId            String
+  order              Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  requestedById      String
+  requestedBy        User            @relation("ModerationRequestRequestedBy", fields: [requestedById], references: [id], onDelete: Cascade)
+  reason             String          @db.Text
+  status             ModerationRequestStatus @default(PENDING)
+  priority           Priority        @default(NORMAL)
+  assignedModeratorId String?
+  assignedModerator  User?           @relation("ModerationRequestAssignedModerator", fields: [assignedModeratorId], references: [id], onDelete: SetNull)
+  moderatorId        String?
+  moderator          User?           @relation("ModerationRequestModerator", fields: [moderatorId], references: [id], onDelete: SetNull)
+  moderatorNote      String?         @db.Text
+  resolvedAt         DateTime?
+  escalatedToAdminId String?
+  escalatedToAdmin   User?           @relation("ModerationRequestEscalatedToAdmin", fields: [escalatedToAdminId], references: [id], onDelete: SetNull)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  evidencePacket     DisputeEvidencePacket?
 
   @@index([orderId])
   @@index([requestedById])
   @@index([status])
+  @@index([priority])
   @@index([moderatorId])
+  @@index([assignedModeratorId])
   @@map("moderation_request")
 }
 

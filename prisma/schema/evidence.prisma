@@ -1,0 +1,13 @@
+/// Dispute evidence packet automatically attached to moderation requests.
+
+model DisputeEvidencePacket {
+  id                String   @id @default(cuid())
+  moderationRequestId String  @unique
+  moderationRequest ModerationRequest @relation(fields: [moderationRequestId], references: [id], onDelete: Cascade)
+  chatMessageIds    String[] @default([])
+  deliveryFileUrls  String[] @default([])
+  checkpointIds     String[] @default([])
+  createdAt         DateTime @default(now())
+
+  @@map("dispute_evidence_packet")
+}

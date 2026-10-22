@@ -25,6 +25,22 @@ model User {
   moderatorAdminRequestsAsRequester ModeratorAdminRequest[] @relation("ModeratorAdminRequestRequestedBy")
   moderatorAdminRequestsAsAdmin ModeratorAdminRequest[] @relation("ModeratorAdminRequestAdmin")
 
+  // Agent session & handoff protocol
+  agentSessions        AgentSession[]
+  agentKpis            AgentKpi[]
+  draftAssignments     DraftAssignment[]
+
+  // Audit logs
+  auditLogs            AuditLog[]
+  roleChangeAuditsAsTarget    RoleChangeAudit[] @relation("RoleChangeAuditTargetUser")
+  roleChangeAuditsAsChangedBy RoleChangeAudit[] @relation("RoleChangeAuditChangedBy")
+  moderatorActionLogs ModeratorActionLog[]
+  platformSettings    PlatformSetting[]
+
+  // Moderation request extensions
+  moderationRequestsAsAssignedModerator ModerationRequest[] @relation("ModerationRequestAssignedModerator")
+  moderationRequestsAsEscalatedToAdmin ModerationRequest[] @relation("ModerationRequestEscalatedToAdmin")
+
   @@map("user")
 }
 

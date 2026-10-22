@@ -36,7 +36,11 @@ import { UsersModule } from './modules/users/users.module.js';
 import { ProfilesModule } from './modules/profiles/profiles.module.js';
 import { GigsModule } from './modules/gigs/gigs.module.js';
 import { AssignmentsModule } from './modules/assignments/assignments.module.js';
+import { DraftAssignmentsModule } from './modules/draft-assignments/draft-assignments.module.js';
+import { PlatformSettingsModule } from './modules/platform-settings/platform-settings.module.js';
+import { AuditModule } from './modules/audit/audit.module.js';
 import { OrdersModule } from './modules/orders/orders.module.js';
+import { BulkActionsModule } from './modules/bulk-actions/bulk-actions.module.js';
 import { PaymentsModule } from './modules/payments/payments.module.js';
 import { MilestonesModule } from './modules/milestones/milestones.module.js';
 import { ChatModule } from './modules/chat/chat.module.js';
@@ -81,8 +85,12 @@ import { RolesGuard } from './common/guards/roles.guard.js';
     ProfilesModule,
     GigsModule,
     AssignmentsModule,
+    DraftAssignmentsModule,
+    PlatformSettingsModule,
+    BulkActionsModule,
     OrdersModule,
     PaymentsModule,
+    AuditModule,
     MilestonesModule,
     ChatModule,
     MatchingModule,

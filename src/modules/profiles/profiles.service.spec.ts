@@ -3,6 +3,7 @@ import { ConflictException, ForbiddenException, NotFoundException } from '@nestj
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ProfilesService } from './profiles.service.js';
 import { PrismaService } from '../../core/database/prisma.service.js';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service.js';
 import { HandwritingStyle, UserRole, VerificationStatus } from '@prisma/client';
 
 describe('ProfilesService', () => {
@@ -66,6 +67,12 @@ describe('ProfilesService', () => {
         {
           provide: PrismaService,
           useValue: prisma,
+        },
+        {
+          provide: PlatformSettingsService,
+          useValue: {
+            getPlatformFeePercentage: vi.fn().mockResolvedValue(10),
+          },
         },
       ],
     }).compile();

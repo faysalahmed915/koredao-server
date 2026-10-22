@@ -1,0 +1,15 @@
+/// Platform-wide configuration editable by admins without redeploy.
+/// Values are cached server-side with short TTL; changes invalidate the cache.
+
+model PlatformSetting {
+  id         String   @id @default(cuid())
+  key        String   @unique
+  value      String   @db.Text
+  description String?
+  updatedById String?
+  updatedBy  User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedAt  DateTime @updatedAt
+
+  @@index([key])
+  @@map("platform_setting")
+}

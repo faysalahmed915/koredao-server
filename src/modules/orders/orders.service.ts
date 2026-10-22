@@ -19,6 +19,7 @@ import {
   OrderStatus,
   WalletTransactionType,
 } from '@prisma/client';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service.js';
 
 export const ORDER_DETAIL_INCLUDE = {
   customer: {
@@ -71,7 +72,10 @@ export const ORDER_DETAIL_INCLUDE = {
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly platformSettingsService: PlatformSettingsService,
+  ) {}
 
   /**
    * Initializes a new order from a Gig purchase or accepted Assignment bid.
@@ -119,7 +123,8 @@ export class OrdersService {
     }
 
     const totalAmount = selectedPkg.price;
-    const platformFee = Math.round(totalAmount * 0.10); // Standard 10% Platform Fee
+    const platformFeePercentage = await this.platformSettingsService.getPlatformFeePercentage();
+    const platformFee = Math.round(totalAmount * platformFeePercentage / 100);
     const netVendorAmount = totalAmount - platformFee;
 
     const deadline = new Date(Date.now() + selectedPkg.deliveryDays * 24 * 60 * 60 * 1000);

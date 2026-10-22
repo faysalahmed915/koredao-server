@@ -3,6 +3,7 @@ import { ForbiddenException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { GigsService } from './gigs.service.js';
 import { PrismaService } from '../../core/database/prisma.service.js';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service.js';
 import { GigCategory, GigTierType, HandwritingStyle, VerificationStatus } from '@prisma/client';
 
 describe('GigsService', () => {
@@ -42,6 +43,12 @@ describe('GigsService', () => {
         {
           provide: PrismaService,
           useValue: prisma,
+        },
+        {
+          provide: PlatformSettingsService,
+          useValue: {
+            getPlatformFeePercentage: vi.fn().mockResolvedValue(10),
+          },
         },
       ],
     }).compile();

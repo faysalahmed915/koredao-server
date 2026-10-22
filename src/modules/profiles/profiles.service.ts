@@ -13,6 +13,7 @@ import { AddHandwritingSampleDto } from './dto/add-handwriting-sample.dto.js';
 import { UpdateCustomerProfileDto } from './dto/update-customer-profile.dto.js';
 import { QueryVendorsDto } from './dto/query-vendors.dto.js';
 import { UserRole, VerificationStatus } from '@prisma/client';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service.js';
 
 export const VENDOR_PUBLIC_SELECT = {
   id: true,
@@ -50,7 +51,10 @@ export const VENDOR_PUBLIC_SELECT = {
 export class ProfilesService {
   private readonly logger = new Logger(ProfilesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly platformSettingsService: PlatformSettingsService,
+  ) {}
 
   /**
    * Submits a new vendor application or re-submits a previously rejected application.

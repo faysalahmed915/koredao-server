@@ -1,0 +1,56 @@
+/// Agent session & handoff protocol for the multi-agent marketplace.
+/// Tracks which user persona (student / assistant / moderator / admin) is
+/// acting on an order at any point in time, and supports context hand-offs
+/// between them.
+
+model AgentSession {
+  id             String     @id @default(cuid())
+  orderId        String
+  order          Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  agentType      AgentType
+  holderUserId   String
+  holder         User       @relation(fields: [holderUserId], references: [id], onDelete: Cascade)
+  contextJson    Json       @default("{}")
+  status         HandoffStatus @default(PENDING)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  handoffs       AgentHandoff[]
+
+  @@index([orderId])
+  @@index([holderUserId])
+  @@index([agentType])
+  @@index([status])
+  @@map("agent_session")
+}
+
+model AgentHandoff {
+  id             String     @id @default(cuid())
+  sessionId      String
+  session        AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  fromAgentType  AgentType
+  toAgentType    AgentType
+  reason         String     @db.Text
+  status         HandoffStatus @default(PENDING)
+  createdAt      DateTime   @default(now())
+
+  @@index([sessionId])
+  @@index([status])
+  @@map("agent_handoff")
+}
+
+model AgentKpi {
+  id            String   @id @default(cuid())
+  agentType     AgentType
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  metricName    String
+  value         Float
+  periodStart   DateTime
+  periodEnd     DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([agentType])
+  @@index([periodStart, periodEnd])
+  @@map("agent_kpi")
+}

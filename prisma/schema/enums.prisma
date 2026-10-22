@@ -113,4 +113,32 @@ enum CheckpointStatus {
   ACCEPTED
   REVISION_REQUESTED
 }
+
+enum AgentType {
+  STUDENT
+  ASSISTANT
+  MODERATOR
+  ADMIN
+}
+
+enum HandoffStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  COMPLETED
+  CANCELLED
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum DraftStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
 

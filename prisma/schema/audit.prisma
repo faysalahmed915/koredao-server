@@ -1,0 +1,51 @@
+/// Immutable audit log for accountability across roles.
+/// Append-only: rows are never updated or deleted once written.
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  actor       User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  action      String
+  targetType  String
+  targetId    String?
+  oldValueJson Json?
+  newValueJson Json?
+  createdAt   DateTime @default(now())
+
+  @@index([actorUserId])
+  @@index([targetType, targetId])
+  @@index([createdAt])
+  @@map("audit_log")
+}
+
+model RoleChangeAudit {
+  id          String   @id @default(cuid())
+  targetUserId String
+  targetUser   User     @relation("RoleChangeAuditTargetUser", fields: [targetUserId], references: [id], onDelete: Cascade)
+  oldRole      UserRole
+  newRole      UserRole
+  changedById  String
+  changedBy    User     @relation("RoleChangeAuditChangedBy", fields: [changedById], references: [id], onDelete: Cascade)
+  reason       String?
+  createdAt   DateTime @default(now())
+
+  @@index([targetUserId])
+  @@index([changedById])
+  @@index([createdAt])
+  @@map("role_change_audit")
+}
+
+model ModeratorActionLog {
+  id           String   @id @default(cuid())
+  moderatorId  String
+  moderator    User     @relation(fields: [moderatorId], references: [id], onDelete: Cascade)
+  actionType   String
+  targetId     String?
+  detailsJson  Json?
+  createdAt    DateTime @default(now())
+
+  @@index([moderatorId])
+  @@index([actionType])
+  @@index([createdAt])
+  @@map("moderator_action_log")
+}

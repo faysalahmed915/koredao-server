@@ -10,6 +10,7 @@ import { CreateGigDto } from './dto/create-gig.dto.js';
 import { UpdateGigDto } from './dto/update-gig.dto.js';
 import { QueryGigsDto } from './dto/query-gigs.dto.js';
 import { VerificationStatus } from '@prisma/client';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service.js';
 
 function slugify(text: string): string {
   return text
@@ -67,7 +68,10 @@ export const GIG_PUBLIC_INCLUDE = {
 export class GigsService {
   private readonly logger = new Logger(GigsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly platformSettingsService: PlatformSettingsService,
+  ) {}
 
   /**
    * Creates a new academic service Gig. Only approved vendors can create gigs.

@@ -3,6 +3,7 @@ import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { OrdersService } from './orders.service.js';
 import { PrismaService } from '../../core/database/prisma.service.js';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service.js';
 import { EscrowStatus, OrderStatus } from '@prisma/client';
 
 describe('OrdersService', () => {
@@ -91,6 +92,12 @@ describe('OrdersService', () => {
         {
           provide: PrismaService,
           useValue: prisma,
+        },
+        {
+          provide: PlatformSettingsService,
+          useValue: {
+            getPlatformFeePercentage: vi.fn().mockResolvedValue(10),
+          },
         },
       ],
     }).compile();

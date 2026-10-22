@@ -8,7 +8,6 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-
 import { PrismaService } from '../../core/database/prisma.service.js';
 import { randomUUID } from 'node:crypto';
 import { SubscriptionPlan, SubscriptionStatus } from '@prisma/client';
@@ -19,6 +18,7 @@ import {
 } from './membership-plans.js';
 import type { CheckoutSubscriptionDto, SubscriptionGateway } from './dto/checkout-subscription.dto.js';
 import type { ConfirmSubscriptionDto } from './dto/confirm-subscription.dto.js';
+import { PlatformSettingsService } from '../platform-settings/platform-settings.service.js';
 
 export interface MembershipSummary {
   isMember: boolean;
