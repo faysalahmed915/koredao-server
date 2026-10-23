@@ -48,6 +48,7 @@ import { MatchingModule } from './modules/matching/matching.module.js';
 import { DashboardModule } from './modules/dashboard/dashboard.module.js';
 import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module.js';
 import { ModerationModule } from './modules/moderation/moderation.module.js';
+import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { AuthGuard } from './modules/auth/auth.guard.js';
 import { RolesGuard } from './common/guards/roles.guard.js';
 
@@ -97,6 +98,7 @@ import { RolesGuard } from './common/guards/roles.guard.js';
     DashboardModule,
     SubscriptionsModule,
     ModerationModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [

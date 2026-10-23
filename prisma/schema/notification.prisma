@@ -1,0 +1,38 @@
+/// User-facing notifications and delivery preferences.
+/// In-app notifications are always written; email is best-effort and only sent
+/// when the user has opted in AND a transport is configured. Never fail an
+/// in-app notification because email is unavailable.
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String   // VENDOR_APPROVED | VENDOR_REJECTED | DISPUTE_SLA_COUNTDOWN | DISPUTE_SLA_BREACH | ESCROW_RELEASE_WARNING | SAFETY_ALERT | TEST
+  title     String
+  body      String   @db.Text
+  dataJson  Json?    // structured payload (orderId, moderationRequestId, vendorProfileId, ...)
+  read      Boolean  @default(false)
+  readAt    DateTime?
+  emailSent Boolean  @default(false)
+  emailSentAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([read])
+  @@index([createdAt])
+  @@map("notification")
+}
+
+model NotificationPreference {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  emailEnabled     Boolean  @default(true)
+  inAppEnabled     Boolean  @default(true)
+  vendorAppOutcome Boolean  @default(true)
+  disputeSla       Boolean  @default(true)
+  releaseWarning   Boolean  @default(true)
+  safetyAlert      Boolean  @default(true)
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId])
+  @@map("notification_preference")
+}
