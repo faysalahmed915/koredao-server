@@ -137,7 +137,7 @@ import { RolesGuard } from './common/guards/roles.guard.js';
     // Timeout interceptor to mitigate slow-loris attacks
     {
       provide: APP_INTERCEPTOR,
-      useValue: new TimeoutInterceptor(15000),
+      useValue: new TimeoutInterceptor(30000),
     },
   ],
 })
