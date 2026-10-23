@@ -20,7 +20,7 @@ export const createBetterAuth = (
   config: ConfigType<typeof authConfig>,
   ip: AuthIpConfig,
 ) => {
-  const isHttps = config.url?.startsWith('https') || process.env.NODE_ENV === 'production';
+    const isHttps = config.url?.startsWith('https') === true;
 
   return betterAuth({
     database: prismaAdapter(prisma, {

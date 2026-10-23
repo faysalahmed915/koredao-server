@@ -587,17 +587,22 @@ export class OrdersService {
       throw new ForbiddenException('You are not a participant in this order');
     }
 
+    const reason = dto.reason ?? dto.disputeReason;
+
     const updated = await this.prisma.order.update({
       where: { id: orderId },
       data: {
         status: OrderStatus.DISPUTED,
-        disputeReason: dto.disputeReason,
+        disputeReason: reason,
+        disputeEvidenceUrl: dto.evidence ?? undefined,
         autoReleaseAt: null,
       },
       include: ORDER_DETAIL_INCLUDE,
     });
 
-    this.logger.log(`Dispute raised on orderId=${orderId} by userId=${userId}: ${dto.disputeReason}`);
+    this.logger.log(
+      `Dispute raised on orderId=${orderId} by userId=${userId}: ${reason}`,
+    );
     return updated;
   }
 

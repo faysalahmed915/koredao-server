@@ -26,6 +26,7 @@ model Order {
   deliveryNotes      String?        @db.Text
   revisionNotes      String?        @db.Text
   disputeReason      String?        @db.Text
+  disputeEvidenceUrl String?        @db.Text
   disputeResolvedAt  DateTime?
   // Agreement handshake for the pre-payment target sidebar flow.
   // customerAcceptedAt: set when a customer initiates from an accepted bid.
