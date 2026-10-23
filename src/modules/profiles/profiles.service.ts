@@ -118,6 +118,12 @@ export class ProfilesService {
         },
       });
 
+      // Mark the applicant as a vendor immediately (unverified until admin approval)
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { role: UserRole.VENDOR },
+      });
+
       this.logger.log(`Vendor re-applied: userId=${userId}, profileId=${updated.id}`);
       return updated;
     }
@@ -161,6 +167,12 @@ export class ProfilesService {
         realNameUpdatedAt: new Date(),
         realNameUpdatedBy: userId,
       },
+    });
+
+    // Mark the applicant as a vendor immediately (unverified until admin approval)
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { role: UserRole.VENDOR },
     });
 
     this.logger.log(`New vendor application submitted: userId=${userId}, profileId=${profile.id}`);
